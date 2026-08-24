@@ -1,0 +1,54 @@
+# ===========================================================================
+#  FVU_RUN_UTILITY — Configuration
+#
+#  All paths below are relative to the folder containing FVU_RUN_UTILITY.exe
+#  (or main.py when running from source).  Absolute paths also work.
+#
+#  Expected folder layout next to the EXE:
+#    FVU_RUN_UTILITY.exe
+#    config.yaml          ← this file
+#    lib/
+#      FVU-Utility.jar
+#    jdk21/               ← portable JDK 21 (must contain bin/java or bin/java.exe)
+#    input/               ← place .SRC / .DWN / .UPL / .UPD / .DAC / .RE files here
+#    support_docs/        ← supporting documents (if required by your backend)
+#    output/              ← generated PDF and output files (created automatically)
+#    logs/                ← application.log and error.log (created automatically)
+# ===========================================================================
+
+# Folder containing the input files to validate (.SRC .DWN .UPL .UPD .DAC .RE)
+input_folder: D:\SFTP&FVU\FVU\input
+
+# Folder with supporting documents sent alongside each file (supportingDocPath).
+# Leave blank if your backend does not require supporting documents.
+doc_folder: support_docs
+
+# Folder where the backend writes its output and where the Executive Summary
+# PDF is saved.
+output_folder: D:\SFTP&FVU\FVU\output
+
+# ---------------------------------------------------------------------------
+#  API connection
+# ---------------------------------------------------------------------------
+api:
+  base_url: http://localhost:9091
+  endpoint: /api/search-validate/file-with-support
+  trigger_source: BATCH          # value sent as the triggerSource form field
+  request_timeout_seconds: 600   # per-file HTTP timeout (seconds)
+
+# Where application.log and error.log are written.
+# Defaults to output_folder when left blank.
+log_folder: logs
+
+# ---------------------------------------------------------------------------
+#  Backend JAR auto-start  (remove or leave jar_path blank to skip)
+#
+#  Relative paths are resolved from the folder containing this config file.
+#    lib/FVU-Utility.jar   — the Spring Boot backend JAR
+#    jdk21/                — portable JDK 21 root (must contain bin/java)
+# ---------------------------------------------------------------------------
+backend:
+  jar_path: lib/FVU-Utility.jar
+  jdk_path: jdk21
+  startup_timeout_seconds: 60
+  jvm_args: ""               # e.g. "-Xmx512m -Dserver.port=9091"

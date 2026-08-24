@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+[Bb]uild/
+
+# Runtime data (local SQLite db, generated batches, FVU runs)
+runtime/
+
+# VS / IDE
+.vs/
+*.user
+
+# NuGet
+*.nupkg

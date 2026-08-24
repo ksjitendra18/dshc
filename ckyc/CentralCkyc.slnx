@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CKYC.Core/CKYC.Core.csproj" />
+    <Project Path="src/CKYC.Crm/CKYC.Crm.csproj" />
+    <Project Path="src/CKYC.Data/CKYC.Data.csproj" />
+    <Project Path="src/CKYC.Files/CKYC.Files.csproj" />
+    <Project Path="src/CKYC.Fvu/CKYC.Fvu.csproj" />
+    <Project Path="src/CKYC.Processor/CKYC.Processor.csproj" />
+  </Folder>
+</Solution>

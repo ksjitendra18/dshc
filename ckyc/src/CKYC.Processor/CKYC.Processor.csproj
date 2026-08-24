@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CKYC.Core\CKYC.Core.csproj" />
+    <ProjectReference Include="..\CKYC.Data\CKYC.Data.csproj" />
+    <ProjectReference Include="..\CKYC.Crm\CKYC.Crm.csproj" />
+    <ProjectReference Include="..\CKYC.Files\CKYC.Files.csproj" />
+    <ProjectReference Include="..\CKYC.Fvu\CKYC.Fvu.csproj" />
+  </ItemGroup>
+
+</Project>

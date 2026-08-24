@@ -1,0 +1,19 @@
+# Root editorconfig for the CKYC solution.
+# Analyzer severities configured here take precedence over the defaults in
+# Directory.Build.props (AnalysisMode=Recommended).
+
+root = true
+
+[*.cs]
+
+# CA1305 (culture-sensitive string.Format/ToString): the codebase deliberately uses
+# fixed, culture-invariant numeric/date patterns ("dd-MM-yyyy", "yyyy-MM-dd", "D4",
+# "00000", "o"). Their output is byte-identical under every culture, so enforcing an
+# IFormatProvider everywhere would be noise with no behavior change. Keep it as an
+# IDE suggestion rather than a build-blocking warning.
+dotnet_diagnostic.CA1305.severity = suggestion
+
+# Keep nullable and basic style consistent.
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion

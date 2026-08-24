@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- A class library that hosts ASP.NET Core minimal APIs. The Microsoft.NET.Sdk.Web
+       SDK implicitly references Microsoft.AspNetCore.App, so no explicit
+       FrameworkReference is needed. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CKYC.Core\CKYC.Core.csproj" />
+  </ItemGroup>
+
+</Project>

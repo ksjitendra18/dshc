@@ -1,0 +1,11 @@
+# ---- Large third-party vendor binaries ----
+# Re-downloadable from the vendor. Kept out of git because each was ~240 MiB
+# (this repo's .git was ~492 MiB before they were removed).
+vendor/*.exe
+vendor/*.zip
+
+# ---- Runtime / transient logs ----
+vendor/logs/*.log
+
+# ---- Safety backup of .git made before the history rewrite ----
+.git-backup*/
