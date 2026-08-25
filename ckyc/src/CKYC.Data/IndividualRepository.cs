@@ -28,10 +28,10 @@ public sealed class IndividualRepository : IIndividualRepository
 
             var now = DateTime.UtcNow.ToString("o");
             await InsertRecord20(conn, localTx, record, now, ct);
-            foreach (var proof in record.Proofs) await InsertRecord30(conn, localTx, record.MasterRecordId, proof, ct);
+            foreach (var proof in record.Proofs) await InsertRecord30(conn, localTx, record.MasterRecordId, record.CustomerId, proof, ct);
             await InsertRecord40(conn, localTx, record, ct);
             await InsertRecord50(conn, localTx, record, ct);
-            foreach (var rp in record.RelatedParties) await InsertRecord60(conn, localTx, record.MasterRecordId, rp, ct);
+            foreach (var rp in record.RelatedParties) await InsertRecord60(conn, localTx, record.MasterRecordId, record.CustomerId, rp, ct);
             await InsertRecord70(conn, localTx, record, ct);
 
             await tx.CommitAsync(ct);
@@ -46,7 +46,7 @@ public sealed class IndividualRepository : IIndividualRepository
         }
     }
 
-    public async Task<IReadOnlyList<Individual>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Individual>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
     {
         if (customerIds.Count == 0) return Array.Empty<Individual>();
         var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
@@ -58,17 +58,17 @@ public sealed class IndividualRepository : IIndividualRepository
         {
             var i = 0;
             foreach (var id in customerIds) cmd.Parameters.Add(NewParam($"@v{i++}", id));
-            cmd.CommandText = $"SELECT * FROM kyc_record_20 WHERE SourceCustomerId IN ({placeholders})";
+            cmd.CommandText = $"SELECT * FROM kyc_record_20 WHERE CustomerId IN ({placeholders})";
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
             {
                 var ind = ReadRecord20(r);
                 ind.MasterRecordId = Convert.ToInt64(r["MasterRecordId"]);
-                ind.SourceCustomerId = r["SourceCustomerId"] as string ?? string.Empty;
+                ind.CustomerId = r["CustomerId"] as string ?? string.Empty;
                 ind.Proofs = new List<ProofOfIdentity>();
                 ind.RelatedParties = new List<RelatedParty>();
                 result.Add(ind);
-                masterIdByCustomer[ind.SourceCustomerId] = ind.MasterRecordId;
+                masterIdByCustomer[ind.CustomerId] = ind.MasterRecordId;
             }
         }
 
@@ -200,7 +200,7 @@ public sealed class IndividualRepository : IIndividualRepository
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO kyc_record_20
-                (MasterRecordId, SourceCustomerId, SearchKey, KycType, NameTitle, NameFirst, NameMiddle, NameLast,
+                (MasterRecordId, CustomerId, SearchKey, KycType, NameTitle, NameFirst, NameMiddle, NameLast,
                  MaidenTitle, MaidenFirst, MaidenMiddle, MaidenLast, MotherTitle, MotherFirst, MotherMiddle, MotherLast,
                  FatherTitle, FatherFirst, FatherMiddle, FatherLast, SpouseTitle, SpouseFirst, SpouseMiddle, SpouseLast,
                  DateOfBirth, Gender, ResidentialStatus, ResidentialSupportedByDocument, Nationality, NationalitySupportedByDocument,
@@ -216,7 +216,7 @@ public sealed class IndividualRepository : IIndividualRepository
                  @minor, @dobm, @namem, @photom, @genProv, @genMatch, @f97, @f61, @panDoc, @otherImp, @disRef,
                  @permDis, @disDate, @pctImp, @daSup, @now, @now)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.SourceCustomerId);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.CustomerId);
         Add(cmd, "@sk", r.SearchKey); Add(cmd, "@kyc", r.KycType);
         Add(cmd, "@nT", r.Name.Title); Add(cmd, "@nF", r.Name.FirstName); Add(cmd, "@nM", r.Name.MiddleName); Add(cmd, "@nL", r.Name.LastName);
         Add(cmd, "@mdT", r.MaidenName.Title); Add(cmd, "@mdF", r.MaidenName.FirstName); Add(cmd, "@mdM", r.MaidenName.MiddleName); Add(cmd, "@mdL", r.MaidenName.LastName);
@@ -238,21 +238,21 @@ public sealed class IndividualRepository : IIndividualRepository
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, ProofOfIdentity p, CancellationToken ct)
+    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, string customerId, ProofOfIdentity p, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO kyc_record_30
-                (MasterRecordId, Record20LineNumber, OvdType, ModeOfAadhaarVerification, PassportExpiryDate,
+                (MasterRecordId, CustomerId, Record20LineNumber, OvdType, ModeOfAadhaarVerification, PassportExpiryDate,
                  DrivingLicenseExpiryDate, LengthOfAadhaar, IdNumber, CertifiedCopyWithOriginal, EquivalentEDoc,
                  VerifiedFromDigiLocker, PresenceInMeaRepository, PresenceInEciRepository, PresenceInRtoRepository,
                  PresenceInNregaRepository, PresenceInNprRecords, DataFromOfflineVerification, ModeOfAuthentication,
                  EkycDataFromUidai, CopyOfOvd)
             VALUES
-                (@m, 1, @ovd, @mode, @pe, @dle, @len, @idn, @cert, @eq, @digi, @mea, @eci, @rto, @nrega, @npr, @off, @auth, @ekyc, @copy)
+                (@m, @customer, 1, @ovd, @mode, @pe, @dle, @len, @idn, @cert, @eq, @digi, @mea, @eci, @rto, @nrega, @npr, @off, @auth, @ekyc, @copy)
             """;
-        Add(cmd, "@m", masterId); Add(cmd, "@ovd", p.OvdType); Add(cmd, "@mode", p.ModeOfAadhaarVerification);
+        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@ovd", p.OvdType); Add(cmd, "@mode", p.ModeOfAadhaarVerification);
         Add(cmd, "@pe", p.PassportExpiryDate); Add(cmd, "@dle", p.DrivingLicenseExpiryDate); Add(cmd, "@len", p.LengthOfAadhaar);
         Add(cmd, "@idn", p.IdNumber); Add(cmd, "@cert", p.CertifiedCopyWithOriginal); Add(cmd, "@eq", p.EquivalentEDoc);
         Add(cmd, "@digi", p.VerifiedFromDigiLocker); Add(cmd, "@mea", p.PresenceInMeaRepository); Add(cmd, "@eci", p.PresenceInEciRepository);
@@ -269,13 +269,13 @@ public sealed class IndividualRepository : IIndividualRepository
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO kyc_record_40
-                (MasterRecordId, Record20LineNumber, PermLine1, PermLine2, PermLine3, PermCountry, PermState, PermDistrict, PermCity, PermPinCode, PermPinOthers, PermDigipin, PermSupportedDocument, PermMatchOvd,
+                (MasterRecordId, CustomerId, Record20LineNumber, PermLine1, PermLine2, PermLine3, PermCountry, PermState, PermDistrict, PermCity, PermPinCode, PermPinOthers, PermDigipin, PermSupportedDocument, PermMatchOvd,
                  CurrLine1, CurrLine2, CurrLine3, CurrCountry, CurrState, CurrDistrict, CurrCity, CurrPinCode, CurrPinOthers, CurrDigipin, CurrSupportedDocument, CurrMatchOvd)
             VALUES
-                (@m, 1, @p1,@p2,@p3,@pco,@pst,@pdi,@pci,@ppin,@ppinO,@pdig,@psup,@pmatch,
+                (@m, @customer, 1, @p1,@p2,@p3,@pco,@pst,@pdi,@pci,@ppin,@ppinO,@pdig,@psup,@pmatch,
                  @c1,@c2,@c3,@cco,@cst,@cdi,@cci,@cpin,@cpinO,@cdig,@csup,@cmatch)
             """;
-        Add(cmd, "@m", r.MasterRecordId);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId);
         Add(cmd, "@p1", perm?.Line1); Add(cmd, "@p2", perm?.Line2); Add(cmd, "@p3", perm?.Line3);
         Add(cmd, "@pco", perm?.Country); Add(cmd, "@pst", perm?.State); Add(cmd, "@pdi", perm?.District);
         Add(cmd, "@pci", perm?.City); Add(cmd, "@ppin", perm?.PinCode); Add(cmd, "@ppinO", perm?.PinCodeOthers);
@@ -293,23 +293,23 @@ public sealed class IndividualRepository : IIndividualRepository
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO kyc_record_50 (MasterRecordId, Record20LineNumber, EmailAddress, CountryCode, MobileNumber, MobileValidatedViaOtp, EmailValidatedViaOtp, MobileValidatedViaThirdParty)
-            VALUES (@m, 1, @email, @cc, @mob, @mOtp, @eOtp, @mTp)
+            INSERT INTO kyc_record_50 (MasterRecordId, CustomerId, Record20LineNumber, EmailAddress, CountryCode, MobileNumber, MobileValidatedViaOtp, EmailValidatedViaOtp, MobileValidatedViaThirdParty)
+            VALUES (@m, @customer, 1, @email, @cc, @mob, @mOtp, @eOtp, @mTp)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@email", c?.Email); Add(cmd, "@cc", c?.CountryCode);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@email", c?.Email); Add(cmd, "@cc", c?.CountryCode);
         Add(cmd, "@mob", c?.MobileNumber); Add(cmd, "@mOtp", c?.MobileValidatedViaOtp); Add(cmd, "@eOtp", c?.EmailValidatedViaOtp); Add(cmd, "@mTp", c?.MobileValidatedViaThirdParty);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, RelatedParty rp, CancellationToken ct)
+    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, string customerId, RelatedParty rp, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO kyc_record_60 (MasterRecordId, Record20LineNumber, RelatedPersonType, CkycNumberOfRelatedPerson)
-            VALUES (@m, 1, @type, @ckyc)
+            INSERT INTO kyc_record_60 (MasterRecordId, CustomerId, Record20LineNumber, RelatedPersonType, CkycNumberOfRelatedPerson)
+            VALUES (@m, @customer, 1, @type, @ckyc)
             """;
-        Add(cmd, "@m", masterId); Add(cmd, "@type", rp.RelatedPersonType); Add(cmd, "@ckyc", rp.CkycNumberOfRelatedPerson);
+        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@type", rp.RelatedPersonType); Add(cmd, "@ckyc", rp.CkycNumberOfRelatedPerson);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -319,13 +319,13 @@ public sealed class IndividualRepository : IIndividualRepository
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO kyc_record_70 (MasterRecordId, Record20LineNumber, Remarks, VideoKycWithoutOfficial, VideoKycWithReOfficial,
+            INSERT INTO kyc_record_70 (MasterRecordId, CustomerId, Record20LineNumber, Remarks, VideoKycWithoutOfficial, VideoKycWithReOfficial,
                 FaceToFaceWithReOfficial, NonFaceToFace, FaceToFaceWithNonOfficial, AttestationDate, EmployeeName, EmployeeCode,
                 EmployeeDesignation, EmployeeBranch, EmployeeCkycId, InstitutionName, InstitutionCode, DeclarationDocument,
                 DeclarationFlag, ClientConsent, Place, DeclarationDate)
-            VALUES (@m, 1, @rem, @v1, @v2, @f1, @nf, @f2, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cc, @pl, @dc)
+            VALUES (@m, @customer, 1, @rem, @v1, @v2, @f1, @nf, @f2, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cc, @pl, @dc)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@v1", o?.VideoKycWithoutOfficial);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@v1", o?.VideoKycWithoutOfficial);
         Add(cmd, "@v2", o?.VideoKycWithReOfficial); Add(cmd, "@f1", o?.FaceToFaceWithReOfficial); Add(cmd, "@nf", o?.NonFaceToFace);
         Add(cmd, "@f2", o?.FaceToFaceWithNonOfficial); Add(cmd, "@ad", o?.AttestationDate); Add(cmd, "@en", o?.EmployeeName);
         Add(cmd, "@ec", o?.EmployeeCode); Add(cmd, "@ed", o?.EmployeeDesignation); Add(cmd, "@eb", o?.EmployeeBranch);

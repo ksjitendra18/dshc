@@ -19,20 +19,20 @@ namespace CKYC.Processor.Commands;
 public sealed class ReattemptCommand : ICommand
 {
     public string Name => "reattempt";
-    public string Usage => "CKYCProcessor.exe reattempt --id <recordId> | --customer <sourceCustomerId> [--reason \"...\"]";
+    public string Usage => "CKYCProcessor.exe reattempt --id <recordId> | --customer <customerId> [--reason \"...\"]";
 
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
         var record = await ResolveRecordAsync(ctx, args, ct);
         if (record is null)
         {
-            Console.Error.WriteLine("[reattempt] Record not found. Pass --id <recordId> or --customer <sourceCustomerId>.");
+            Console.Error.WriteLine("[reattempt] Record not found. Pass --id <recordId> or --customer <customerId>.");
             return 1;
         }
 
         if (record.Status is not (MasterRecordStatus.Rejected or MasterRecordStatus.Failed) && !record.IsRejected)
         {
-            Console.Error.WriteLine($"[reattempt] Record {record.SourceCustomerId} is not in a re-pushable state (current status: {record.Status.Label()}).");
+            Console.Error.WriteLine($"[reattempt] Record {record.CustomerId} is not in a re-pushable state (current status: {record.Status.Label()}).");
             return 1;
         }
 
@@ -52,7 +52,7 @@ public sealed class ReattemptCommand : ICommand
         await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
         {
             MasterRecordId = record.Id,
-            SourceCustomerId = record.SourceCustomerId,
+            CustomerId = record.CustomerId,
             Stage = "Reattempt",
             Status = (int)MasterRecordStatus.Saved,
             Success = true,
@@ -60,7 +60,7 @@ public sealed class ReattemptCommand : ICommand
             AttemptedAt = now,
         }, ct);
 
-        Console.WriteLine($"[reattempt] Re-pushing {record.SourceCustomerId} (record #{record.Id})");
+        Console.WriteLine($"[reattempt] Re-pushing {record.CustomerId} (record #{record.Id})");
         Console.WriteLine($"[reattempt]   prior status={record.Status.Label()} reconStatus={record.ReconStatus} retryCount={record.RetryCount}");
         if (record.LastResponseRejectionRemark is not null)
             Console.WriteLine($"[reattempt]   prior rejection remark: {record.LastResponseRejectionRemark}");
@@ -94,7 +94,7 @@ public sealed class ReattemptCommand : ICommand
         return new MasterRecordReattempt
         {
             MasterRecordId = record.Id,
-            SourceCustomerId = record.SourceCustomerId,
+            CustomerId = record.CustomerId,
             Reason = reason,
             PreviousStatus = (int)record.Status,
             PreviousReconStatus = record.ReconStatus,

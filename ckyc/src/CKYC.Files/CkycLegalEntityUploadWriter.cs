@@ -55,7 +55,7 @@ public sealed class CkycLegalEntityUploadWriter
     }
 
     /// <summary>
-    /// Maps each source customer id to the record-20 "Line Number" written in this file so
+    /// Maps each customer id to the record-20 "Line Number" written in this file so
     /// a CERSAI reply can be attributed back to the right master record.
     /// </summary>
     public static IReadOnlyDictionary<string, int> ComputeRecord20Lines(IReadOnlyList<LegalEntity> records)
@@ -64,7 +64,7 @@ public sealed class CkycLegalEntityUploadWriter
         var lineNo = 1;
         foreach (var r in records)
         {
-            map[r.SourceCustomerId] = lineNo;
+            map[r.CustomerId] = lineNo;
             lineNo += 1;                                                  // record-20
             if (r.Proofs.Count > 0) lineNo += 1;                          // record-30
             if (r.RegisteredAddress is not null) lineNo += 1;             // record-40

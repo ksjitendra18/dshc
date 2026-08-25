@@ -38,7 +38,7 @@ public sealed class DummyCrmLegalEntityProvider
 
         return new LegalEntity
         {
-            SourceCustomerId = customerId,
+            CustomerId = customerId,
             SearchKey = searchKey,
             EntityName = constit is LeConstitution.PrivateLimitedCompany
                 ? $"Meridian Software Pvt Ltd {idx % 100}"

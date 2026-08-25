@@ -24,6 +24,7 @@ public interface IMasterRepository
     Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, string? clientType = null, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetByBatchFileAsync(string batchFile, CancellationToken ct = default);
     Task<MasterRecord?> GetByBatchLineAsync(string batchFile, int record20Line, CancellationToken ct = default);
+    Task<IReadOnlyList<CustomerBatchRecord>> GetBatchHistoryAsync(string customerId, CancellationToken ct = default);
 
     /// <summary>Transitions the record to <paramref name="status"/>, optionally setting the matching stage flag + timestamp.</summary>
     Task<bool> UpdateStatusAsync(long id, MasterRecordStatus status, string? remarks, string? lastError, CancellationToken ct = default);
@@ -56,6 +57,8 @@ public interface IMasterRepository
     /// <summary>Persists one CERSAI response detail and mirrors it onto the master record summary columns.</summary>
     Task<MasterRecordResponse> AddResponseAsync(MasterRecordResponse response, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecordResponse>> GetResponsesAsync(long masterRecordId, CancellationToken ct = default);
+    Task<bool> HasUploadResponseFileAsync(string sourceHash, string responseFileName, CancellationToken ct = default);
+    Task<bool> TryAddUploadResponseFileAsync(UploadResponseFile responseFile, CancellationToken ct = default);
 
     /// <summary>Persists one stage attempt / retry audit row.</summary>
     Task<int> LogAttemptAsync(MasterRecordAttempt attempt, CancellationToken ct = default);
@@ -81,14 +84,14 @@ public interface IMasterRepository
 public interface IIndividualRepository
 {
     Task<SaveRecordResult> SaveAsync(Individual record, CancellationToken ct = default);
-    Task<IReadOnlyList<Individual>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
+    Task<IReadOnlyList<Individual>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
 }
 
 /// <summary>Legal-entity record tables operations (step 3 persistence, client type L).</summary>
 public interface ILegalEntityRepository
 {
     Task<SaveRecordResult> SaveAsync(LegalEntity record, CancellationToken ct = default);
-    Task<IReadOnlyList<LegalEntity>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
+    Task<IReadOnlyList<LegalEntity>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
 }
 
 /// <summary>Dummy CRM API client (step 2).</summary>
@@ -129,4 +132,6 @@ public interface IBatchJournal
     Task LogBatchAsync(GeneratedBatch batch, CancellationToken ct = default);
     Task LogFvuRunAsync(FvuRunResult result, CancellationToken ct = default);
     Task<GeneratedBatch?> GetLastBatchAsync(CancellationToken ct = default);
+    Task<GeneratedBatch?> GetBatchByKeyAsync(string batchKey, CancellationToken ct = default);
+    Task<GeneratedBatch?> GetBatchByUploadFileAsync(string uploadFileName, CancellationToken ct = default);
 }

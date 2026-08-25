@@ -34,6 +34,19 @@ public sealed class SqliteDatabase : ICkycDatabase, IDisposable
     {
         if (_initialized) return;
         await using var conn = (SqliteConnection)Create();
+
+        // Rename the organization-owned key before creating indexes or running additive
+        // migrations. SQLite preserves the data and updates dependent index definitions.
+        foreach (var table in Ddl.CustomerIdTables)
+        {
+            if (!await ColumnExistsAsync(conn, table, "SourceCustomerId", ct) ||
+                await ColumnExistsAsync(conn, table, "CustomerId", ct)) continue;
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {table} RENAME COLUMN SourceCustomerId TO CustomerId";
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
         foreach (var sql in Ddl.CreateStatements)
         {
             await using var cmd = conn.CreateCommand();
@@ -47,6 +60,30 @@ public sealed class SqliteDatabase : ICkycDatabase, IDisposable
             if (await ColumnExistsAsync(conn, table, column, ct)) continue;
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = alterSql;
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        // Handle a partially upgraded database that happens to contain both names.
+        foreach (var table in Ddl.CustomerIdTables)
+        {
+            if (!await ColumnExistsAsync(conn, table, "SourceCustomerId", ct) ||
+                !await ColumnExistsAsync(conn, table, "CustomerId", ct)) continue;
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"UPDATE {table} SET CustomerId=SourceCustomerId WHERE CustomerId IS NULL";
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        // Older child record tables did not carry the identifier at all. Populate those
+        // rows through their stable MasterRecordId relationship.
+        foreach (var table in Ddl.MasterLinkedCustomerIdTables)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                UPDATE {table}
+                   SET CustomerId=(SELECT m.CustomerId FROM master_record m WHERE m.Id={table}.MasterRecordId)
+                 WHERE CustomerId IS NULL
+                """;
             await cmd.ExecuteNonQueryAsync(ct);
         }
 

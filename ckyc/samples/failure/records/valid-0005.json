@@ -1,5 +1,5 @@
 {
-  "sourceCustomerId": "TEST-VALID-0005",
+  "customerId": "TEST-VALID-0005",
   "searchKey": "IMO26082433347192328",
   "kycType": "N",
   "name": { "title": "Mr.", "firstName": "Ashish", "middleName": "", "lastName": "Kumar" },

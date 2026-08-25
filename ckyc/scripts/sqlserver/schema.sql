@@ -10,7 +10,7 @@
 
 CREATE TABLE master_record (
     Id                           BIGINT IDENTITY(1,1) PRIMARY KEY,
-    SourceCustomerId             NVARCHAR(50),
+    CustomerId             NVARCHAR(50),
     BusinessDate                 DATE,
     Status                       INT,
     Remarks                      NVARCHAR(500),
@@ -51,7 +51,7 @@ CREATE TABLE master_record (
     CreatedAt                    DATETIME2,
     UpdatedAt                    DATETIME2
 );
-CREATE INDEX ix_master_customer   ON master_record (SourceCustomerId);
+CREATE INDEX ix_master_customer   ON master_record (CustomerId);
 CREATE INDEX ix_master_status     ON master_record (Status);
 CREATE INDEX ix_master_batchline  ON master_record (BatchFile, BatchRecordLine);
 GO
@@ -59,7 +59,7 @@ GO
 CREATE TABLE kyc_record_20 (
     Id                              BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId                  BIGINT,
-    SourceCustomerId                NVARCHAR(50),
+    CustomerId                NVARCHAR(50),
     SearchKey                       NVARCHAR(20),
     KycType                         NVARCHAR(1),
     NameTitle                       NVARCHAR(4),
@@ -101,6 +101,7 @@ GO
 CREATE TABLE kyc_record_30 (
     Id                           BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId               BIGINT,
+    CustomerId                   NVARCHAR(50),
     Record20LineNumber           INT,
     OvdType                      NVARCHAR(1),
     ModeOfAadhaarVerification    NVARCHAR(50),
@@ -126,6 +127,7 @@ GO
 CREATE TABLE kyc_record_40 (
     Id                         BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId             BIGINT,
+    CustomerId                 NVARCHAR(50),
     Record20LineNumber         INT,
     PermLine1                  NVARCHAR(60),
     PermLine2                  NVARCHAR(60),
@@ -157,6 +159,7 @@ GO
 CREATE TABLE kyc_record_50 (
     Id                          BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId              BIGINT,
+    CustomerId                  NVARCHAR(50),
     Record20LineNumber          INT,
     EmailAddress                NVARCHAR(254),
     CountryCode                 NVARCHAR(4),
@@ -170,6 +173,7 @@ GO
 CREATE TABLE kyc_record_60 (
     Id                          BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId              BIGINT,
+    CustomerId                  NVARCHAR(50),
     Record20LineNumber          INT,
     RelatedPersonType           NVARCHAR(1),
     CkycNumberOfRelatedPerson   NVARCHAR(14)
@@ -179,6 +183,7 @@ GO
 CREATE TABLE kyc_record_70 (
     Id                         BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId             BIGINT,
+    CustomerId                 NVARCHAR(50),
     Record20LineNumber         INT,
     Remarks                    NVARCHAR(200),
     VideoKycWithoutOfficial    NVARCHAR(1),
@@ -202,6 +207,159 @@ CREATE TABLE kyc_record_70 (
 );
 GO
 
+CREATE INDEX ix_kyc_record20_customer ON kyc_record_20 (CustomerId);
+CREATE INDEX ix_kyc_record30_customer ON kyc_record_30 (CustomerId);
+CREATE INDEX ix_kyc_record40_customer ON kyc_record_40 (CustomerId);
+CREATE INDEX ix_kyc_record50_customer ON kyc_record_50 (CustomerId);
+CREATE INDEX ix_kyc_record60_customer ON kyc_record_60 (CustomerId);
+CREATE INDEX ix_kyc_record70_customer ON kyc_record_70 (CustomerId);
+GO
+
+CREATE TABLE legal_entity_record_20 (
+    Id                         BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId             BIGINT,
+    CustomerId                 NVARCHAR(50),
+    SearchKey                  NVARCHAR(20),
+    EntityName                 NVARCHAR(99),
+    EntityConstitution         NVARCHAR(2),
+    ListedCompany              NVARCHAR(1),
+    RegisteredFirm             NVARCHAR(1),
+    RegisteredTrust            NVARCHAR(1),
+    DateOfIncorporation        NVARCHAR(10),
+    DateOfCommencement         NVARCHAR(10),
+    PlaceOfIncorporation       NVARCHAR(60),
+    CountryOfIncorporation     NVARCHAR(2),
+    TinIssuingCountry          NVARCHAR(2),
+    Pan                        NVARCHAR(10),
+    Form97                     NVARCHAR(1),
+    TinGstNumber               NVARCHAR(20),
+    PanDocument                NVARCHAR(125),
+    PanVerified                NVARCHAR(1),
+    TinGstnDocument            NVARCHAR(125),
+    CreatedAt                  DATETIME2,
+    UpdatedAt                  DATETIME2
+);
+GO
+
+CREATE TABLE legal_entity_record_30 (
+    Id                               BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId                   BIGINT,
+    CustomerId                       NVARCHAR(50),
+    Record20LineNumber               INT,
+    CertificateOfIncorporation       NVARCHAR(125),
+    Cin                              NVARCHAR(21),
+    MemorandumAndArticles            NVARCHAR(125),
+    ResolutionBoardPoA               NVARCHAR(125),
+    NamesSeniorManagement            NVARCHAR(125),
+    CertificateOfCommencement        NVARCHAR(125),
+    OthersCompany                    NVARCHAR(125),
+    RegistrationCertificate          NVARCHAR(125),
+    RegistrationNumber               NVARCHAR(50),
+    LlpinCertificate                 NVARCHAR(125),
+    Llpin                            NVARCHAR(7),
+    PartnershipDeed                  NVARCHAR(125),
+    NamesAllPartners                 NVARCHAR(125),
+    OthersPartnership                NVARCHAR(125),
+    TrustRegistrationCertificate     NVARCHAR(125),
+    TrustRegistrationNumber          NVARCHAR(50),
+    TrustDeed                        NVARCHAR(125),
+    NamesBeneficiariesTrustees       NVARCHAR(125),
+    TrustPowerOfAttorney             NVARCHAR(125),
+    OthersTrust                      NVARCHAR(125),
+    UnincorporatedRegCertificate     NVARCHAR(125),
+    UnincorporatedRegNumber          NVARCHAR(50),
+    ResolutionManagingBody           NVARCHAR(125),
+    UnincorporatedPowerOfAttorney     NVARCHAR(125),
+    InfoEstablishExistence           NVARCHAR(125),
+    OthersUnincorporated             NVARCHAR(125),
+    SupportingDocumentsPoi           NVARCHAR(125),
+    OtherTypeRegistrationNumber      NVARCHAR(50),
+    OtherTypeRegistrationCertificate NVARCHAR(125),
+    OtherTypePowerOfAttorney          NVARCHAR(125),
+    ActivityProof1                    NVARCHAR(125),
+    ActivityProof2                    NVARCHAR(125),
+    OthersOtherType                   NVARCHAR(125)
+);
+GO
+
+CREATE TABLE legal_entity_record_40 (
+    Id                       BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId           BIGINT,
+    CustomerId               NVARCHAR(50),
+    Record20LineNumber       INT,
+    RegLine1                 NVARCHAR(60), RegLine2 NVARCHAR(60), RegLine3 NVARCHAR(60),
+    RegCity                  NVARCHAR(60), RegState NVARCHAR(2), RegDistrict NVARCHAR(2),
+    RegPinCode               NVARCHAR(6), RegPinOthers NVARCHAR(6), RegDigipin NVARCHAR(10),
+    RegCountry               NVARCHAR(2), RegProofOfAddress NVARCHAR(1),
+    RegOtherDocumentName     NVARCHAR(50), RegDocument NVARCHAR(125),
+    SameAsRegistered         NVARCHAR(1),
+    PrinLine1                NVARCHAR(60), PrinLine2 NVARCHAR(60), PrinLine3 NVARCHAR(60),
+    PrinCity                 NVARCHAR(60), PrinState NVARCHAR(2), PrinDistrict NVARCHAR(2),
+    PrinPinCode              NVARCHAR(6), PrinPinOthers NVARCHAR(6), PrinDigipin NVARCHAR(10),
+    PrinCountry              NVARCHAR(2), PrinProofOfAddress NVARCHAR(1),
+    PrinOtherDocumentName    NVARCHAR(50), PrinDocument NVARCHAR(125)
+);
+GO
+
+CREATE TABLE legal_entity_record_50 (
+    Id                 BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId     BIGINT,
+    CustomerId         NVARCHAR(50),
+    Record20LineNumber INT,
+    CountryCode1       NVARCHAR(6), MobileNumber1 NVARCHAR(15),
+    CountryCode2       NVARCHAR(6), MobileNumber2 NVARCHAR(15),
+    EmailId1           NVARCHAR(254), EmailId2 NVARCHAR(254),
+    Telephone          NVARCHAR(12), Fax NVARCHAR(12)
+);
+GO
+
+CREATE TABLE legal_entity_record_60 (
+    Id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId      BIGINT,
+    CustomerId          NVARCHAR(50),
+    Record20LineNumber  INT,
+    Relation            NVARCHAR(60),
+    CkycNumber          NVARCHAR(14),
+    ControllingInterest NVARCHAR(50),
+    PercentageOwnership NVARCHAR(10),
+    OtherRelationName   NVARCHAR(33),
+    Din                 NVARCHAR(8)
+);
+GO
+
+CREATE TABLE legal_entity_record_70 (
+    Id                         BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId             BIGINT,
+    CustomerId                 NVARCHAR(50),
+    Record20LineNumber         INT,
+    Remarks                    NVARCHAR(200),
+    CertifiedCopies            NVARCHAR(1),
+    EquivalentEDoc             NVARCHAR(1),
+    VerificationFromDigiLocker NVARCHAR(1),
+    AttestationDate            NVARCHAR(10),
+    EmployeeName               NVARCHAR(99),
+    EmployeeCode               NVARCHAR(50),
+    EmployeeDesignation        NVARCHAR(50),
+    EmployeeBranch             NVARCHAR(50),
+    EmployeeCkycId             NVARCHAR(14),
+    InstitutionName            NVARCHAR(99),
+    InstitutionCode            NVARCHAR(50),
+    DeclarationDocument        NVARCHAR(125),
+    DeclarationFlag            NVARCHAR(1),
+    ConsentDocument            NVARCHAR(125),
+    Place                      NVARCHAR(40),
+    DeclarationDate            NVARCHAR(10)
+);
+GO
+
+CREATE INDEX ix_le_record20_customer ON legal_entity_record_20 (CustomerId);
+CREATE INDEX ix_le_record30_customer ON legal_entity_record_30 (CustomerId);
+CREATE INDEX ix_le_record40_customer ON legal_entity_record_40 (CustomerId);
+CREATE INDEX ix_le_record50_customer ON legal_entity_record_50 (CustomerId);
+CREATE INDEX ix_le_record60_customer ON legal_entity_record_60 (CustomerId);
+CREATE INDEX ix_le_record70_customer ON legal_entity_record_70 (CustomerId);
+GO
+
 CREATE TABLE batch (
     Id             BIGINT IDENTITY(1,1) PRIMARY KEY,
     BatchKey       NVARCHAR(60),
@@ -211,6 +369,18 @@ CREATE TABLE batch (
     RecordCount    INT,
     CreatedAt      DATETIME2
 );
+GO
+
+CREATE TABLE master_record_batch (
+    Id                 BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId     BIGINT,
+    CustomerId         NVARCHAR(50),
+    BatchFile          NVARCHAR(260),
+    Record20LineNumber INT,
+    BatchedAt          DATETIME2
+);
+CREATE INDEX ix_master_record_batch_customer ON master_record_batch (CustomerId, BatchedAt);
+CREATE INDEX ix_master_record_batch_fileline ON master_record_batch (BatchFile, Record20LineNumber);
 GO
 
 CREATE TABLE fvu_run (
@@ -230,7 +400,7 @@ GO
 CREATE TABLE master_record_response (
     Id                    BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId        BIGINT,
-    SourceCustomerId      NVARCHAR(50),
+    CustomerId      NVARCHAR(50),
     BatchFile             NVARCHAR(260),
     ResponseFileNumber    INT,
     ResponseFileName      NVARCHAR(260),
@@ -249,10 +419,28 @@ CREATE TABLE master_record_response (
 CREATE INDEX ix_master_response_master ON master_record_response (MasterRecordId);
 GO
 
+CREATE TABLE upload_response_file (
+    Id                    BIGINT IDENTITY(1,1) PRIMARY KEY,
+    BatchFile             NVARCHAR(260),
+    ResponseFileName      NVARCHAR(260),
+    ResponseFileNumber    INT,
+    TotalRecords          INT,
+    TotalProcessed        INT,
+    UnderProcessing       INT,
+    Failed                INT,
+    ResponseTimestamp     NVARCHAR(30),
+    RawHeaderData         NVARCHAR(MAX),
+    SourceArchiveName     NVARCHAR(260),
+    SourceHash            NVARCHAR(128),
+    CreatedAt             DATETIME2
+);
+CREATE INDEX ix_upload_response_file_identity ON upload_response_file (SourceHash, ResponseFileName);
+GO
+
 CREATE TABLE master_record_attempt (
     Id             BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId BIGINT,
-    SourceCustomerId NVARCHAR(50),
+    CustomerId NVARCHAR(50),
     Stage          NVARCHAR(50),
     ActivityTypeId BIGINT,
     Attempt        INT,
@@ -299,7 +487,7 @@ GO
 CREATE TABLE master_record_reattempt (
     Id                              BIGINT IDENTITY(1,1) PRIMARY KEY,
     MasterRecordId                  BIGINT,
-    SourceCustomerId                NVARCHAR(50),
+    CustomerId                NVARCHAR(50),
     Reason                          NVARCHAR(1000),
     PreviousStatus                  INT,
     PreviousReconStatus             NVARCHAR(50),
@@ -322,7 +510,7 @@ GO
 CREATE TABLE search_request (
     Id                       BIGINT IDENTITY(1,1) PRIMARY KEY,
     ExternalRequestId        NVARCHAR(50),
-    SourceCustomerId         NVARCHAR(50),
+    CustomerId         NVARCHAR(50),
     ClientType               NVARCHAR(1),
     SearchOption             INT,
     IdentityTypeAndNumber    NVARCHAR(2000),
@@ -457,4 +645,48 @@ CREATE TABLE search_response_file (
 );
 CREATE INDEX ix_search_response_file_batch ON search_response_file (SearchBatchId);
 CREATE INDEX ix_search_response_file_hash ON search_response_file (SourceHash);
+GO
+
+CREATE TABLE download_response_file (
+    Id                 BIGINT IDENTITY(1,1) PRIMARY KEY,
+    ResponseFileName   NVARCHAR(260),
+    ResponseFileNumber INT,
+    FiCode             NVARCHAR(6),
+    RegionCode         NVARCHAR(11),
+    ClientType         NVARCHAR(1),
+    TotalRecords       INT,
+    Version            NVARCHAR(20),
+    ResponseDate       NVARCHAR(30),
+    RawHeaderData      NVARCHAR(MAX),
+    SourceArchiveName  NVARCHAR(260),
+    SourceHash         NVARCHAR(128),
+    CreatedAt          DATETIME2
+);
+CREATE INDEX ix_download_response_file_hash ON download_response_file (SourceHash, ResponseFileName);
+GO
+
+CREATE TABLE download_response_line (
+    Id                      BIGINT IDENTITY(1,1) PRIMARY KEY,
+    DownloadResponseFileId  BIGINT,
+    SourceEntryPath          NVARCHAR(1000),
+    RecordType              NVARCHAR(2),
+    LineNumber              INT,
+    InputRecord20LineNumber INT,
+    CkycNumber              NVARCHAR(15),
+    RawData                 NVARCHAR(MAX),
+    CreatedAt               DATETIME2
+);
+CREATE INDEX ix_download_response_line_file ON download_response_line (DownloadResponseFileId);
+GO
+
+CREATE TABLE download_response_artifact (
+    Id                     BIGINT IDENTITY(1,1) PRIMARY KEY,
+    DownloadResponseFileId BIGINT,
+    EntryPath              NVARCHAR(1000),
+    FileName               NVARCHAR(260),
+    Size                   BIGINT,
+    Sha256                 NVARCHAR(128),
+    CreatedAt              DATETIME2
+);
+CREATE INDEX ix_download_response_artifact_file ON download_response_artifact (DownloadResponseFileId);
 GO

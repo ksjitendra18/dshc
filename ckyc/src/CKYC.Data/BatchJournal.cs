@@ -51,9 +51,21 @@ public sealed class BatchJournal : IBatchJournal
 
     public async Task<GeneratedBatch?> GetLastBatchAsync(CancellationToken ct = default)
     {
+        return await GetBatchAsync("SELECT * FROM batch ORDER BY Id DESC LIMIT 1", null, ct);
+    }
+
+    public Task<GeneratedBatch?> GetBatchByKeyAsync(string batchKey, CancellationToken ct = default)
+        => GetBatchAsync("SELECT * FROM batch WHERE BatchKey=@value ORDER BY Id DESC LIMIT 1", batchKey, ct);
+
+    public Task<GeneratedBatch?> GetBatchByUploadFileAsync(string uploadFileName, CancellationToken ct = default)
+        => GetBatchAsync("SELECT * FROM batch WHERE UploadFileName=@value ORDER BY Id DESC LIMIT 1", uploadFileName, ct);
+
+    private async Task<GeneratedBatch?> GetBatchAsync(string sql, string? value, CancellationToken ct)
+    {
         await using var conn = _db.Create();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM batch ORDER BY Id DESC LIMIT 1";
+        cmd.CommandText = sql;
+        if (value is not null) cmd.Parameters.Add(NewParam("@value", value));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         return new GeneratedBatch(

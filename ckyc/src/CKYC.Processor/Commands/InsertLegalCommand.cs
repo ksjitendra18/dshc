@@ -25,9 +25,9 @@ public sealed class InsertLegalCommand : ICommand
         var legal = BuildLegalEntity(ctx, args);
         Normalize(legal);
 
-        if (string.IsNullOrWhiteSpace(legal.SourceCustomerId))
+        if (string.IsNullOrWhiteSpace(legal.CustomerId))
         {
-            Console.Error.WriteLine("[insert-legal] A source customer id is required (--customer-id or sourceCustomerId in --file).");
+            Console.Error.WriteLine("[insert-legal] A customer id is required (--customer-id or customerId in --file).");
             return 1;
         }
         if (string.IsNullOrWhiteSpace(legal.EntityName))
@@ -40,10 +40,10 @@ public sealed class InsertLegalCommand : ICommand
         ApplyValidDefaults(ctx, legal);
 
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
-        var master = await ctx.Master.EnsureAsync(legal.SourceCustomerId, businessDate, "L", ct);
+        var master = await ctx.Master.EnsureAsync(legal.CustomerId, businessDate, "L", ct);
 
         legal.MasterRecordId = master.Id;
-        legal.SourceCustomerId = master.SourceCustomerId;
+        legal.CustomerId = master.CustomerId;
 
         var save = await ctx.LegalEntities.SaveAsync(legal, ct);
         if (!save.Success)
@@ -54,7 +54,7 @@ public sealed class InsertLegalCommand : ICommand
 
         await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
 
-        Console.WriteLine($"[insert-legal] Created '{legal.SourceCustomerId}' ({legal.EntityName})");
+        Console.WriteLine($"[insert-legal] Created '{legal.CustomerId}' ({legal.EntityName})");
         Console.WriteLine($"[insert-legal]   {save.Summary}");
         Console.WriteLine("[insert-legal] Next: `build-zip-legal` then `fvu` to validate and process.");
         return 0;
@@ -65,8 +65,8 @@ public sealed class InsertLegalCommand : ICommand
         // Build the compliant default for THIS entity's constitution (not a deterministic
         // alternate), so the POI proof always matches the requested constitution branch.
         var defaults = string.IsNullOrWhiteSpace(legal.EntityConstitution)
-            ? ctx.CrmLegalEntities.GetLegalEntity(legal.SourceCustomerId)
-            : ctx.CrmLegalEntities.GetLegalEntity(legal.SourceCustomerId, legal.EntityConstitution);
+            ? ctx.CrmLegalEntities.GetLegalEntity(legal.CustomerId)
+            : ctx.CrmLegalEntities.GetLegalEntity(legal.CustomerId, legal.EntityConstitution);
 
         if (legal.Proofs.Count == 0 && defaults.Proofs.Count > 0) legal.Proofs = defaults.Proofs;
         if (legal.RegisteredAddress is null) legal.RegisteredAddress = defaults.RegisteredAddress;
@@ -98,7 +98,7 @@ public sealed class InsertLegalCommand : ICommand
 
     private static LegalEntity BuildLegalEntity(AppContext ctx, string[] args)
     {
-        // For default-filling we always need the CRM provider for this source customer.
+        // For default-filling we always need the CRM provider for this customer.
         var file = Option(args, "--file");
         if (file is not null && File.Exists(file))
         {
@@ -108,7 +108,7 @@ public sealed class InsertLegalCommand : ICommand
 
         var legal = new LegalEntity
         {
-            SourceCustomerId = Option(args, "--customer-id") ?? string.Empty,
+            CustomerId = Option(args, "--customer-id") ?? string.Empty,
             SearchKey = "LMO" + Guid.NewGuid().ToString("N").Replace("-", "")[..17],
             EntityConstitution = Option(args, "--constitution") ?? string.Empty,
         };

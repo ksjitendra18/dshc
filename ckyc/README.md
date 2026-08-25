@@ -6,7 +6,7 @@ executable (`CKYCProcessor.exe`) with independent, deployable sub-commands — o
 pipeline step — so every stage can be run on its own and orchestrated by a scheduler:
 
 ```
-CKYCProcessor.exe fetch cust     # 1. source customer ids   -> master table (CBS fetch; retryable)
+CKYCProcessor.exe fetch cust     # 1. customer ids   -> master table (CBS fetch; retryable)
 CKYCProcessor.exe insert         #    create a NEW customer record (manual details)
 CKYCProcessor.exe crm serve      # 2. dummy CRM API         (replace with production)
 CKYCProcessor.exe store          # 3. CRM -> record tables  (with simulated error saving)
@@ -21,6 +21,8 @@ CKYCProcessor.exe search-load search_customer.json # search JSON -> pending requ
 CKYCProcessor.exe search-process --limit 1000      # atomically claim rows -> .SRC
 CKYCProcessor.exe search-fvu                        # validate latest .SRC -> .SRC.zip
 CKYCProcessor.exe search-response                   # .SRC.RESm / response ZIP -> response tables
+CKYCProcessor.exe batch-find --customer <id>        # customer -> complete upload-batch history
+CKYCProcessor.exe download-response --path <path>   # .DWN.RES ZIP -> immutable lines + artifact inventory
 ```
 
 The pipeline was verified **end-to-end against the real CERSAI `FVU_RUN_UTILITY.exe`**:
@@ -53,7 +55,7 @@ The schema uses **length-only** column definitions (plus an identity primary key
 deliberately **no NOT NULL / UNIQUE / CHECK / FK constraints** — as requested ("length
 validation yes, other validation no"). All tables are created on startup.
 
-- `master_record` — step 1: daily source customer ids + a **single current-stage** `Status`
+- `master_record` — step 1: daily customer ids + a **single current-stage** `Status`
   (Pending → CrmFetched → Saved → Batched → Uploaded → ResponseRead → Reconciled/Rejected),
   per-stage `Is*`/`*At` flags and timestamps, `Remarks`, `RetryCount` / `LastError` /
   `LastAttemptAt`, the batch file + record-20 line, the latest CERSAI reply summary

@@ -11,7 +11,7 @@ public sealed class MasterRecordResponse
 {
     public long Id { get; set; }
     public long MasterRecordId { get; set; }
-    public string SourceCustomerId { get; set; } = string.Empty;
+    public string CustomerId { get; set; } = string.Empty;
 
     /// <summary>Batch upload file the response belongs to.</summary>
     public string? BatchFile { get; set; }

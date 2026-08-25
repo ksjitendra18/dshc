@@ -4,7 +4,7 @@ using CKYC.Core.Configuration;
 
 namespace CKYC.Core.Abstractions;
 
-/// <summary>Produces the daily set of incoming source customer ids for a business date.</summary>
+/// <summary>Produces the daily set of incoming customer ids for a business date.</summary>
 public interface IDailyCustomerIdProvider
 {
     IReadOnlyList<string> GetIds(DateOnly businessDate);

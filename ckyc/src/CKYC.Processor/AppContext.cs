@@ -25,6 +25,7 @@ public sealed class AppContext
         LegalEntities = new LegalEntityRepository(Database);
         Journal = new BatchJournal(Database);
         Search = new SearchRepository(Database);
+        Downloads = new DownloadRepository(Database);
 
         CrmData = new DummyCrmDataProvider();
         CrmLegalEntities = new DummyCrmLegalEntityProvider();
@@ -46,6 +47,7 @@ public sealed class AppContext
     public ILegalEntityRepository LegalEntities { get; }
     public IBatchJournal Journal { get; }
     public ISearchRepository Search { get; }
+    public IDownloadRepository Downloads { get; }
 
     public DummyCrmDataProvider CrmData { get; }
     public DummyCrmLegalEntityProvider CrmLegalEntities { get; }

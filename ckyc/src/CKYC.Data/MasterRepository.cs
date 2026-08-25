@@ -19,7 +19,7 @@ public sealed class MasterRepository : IMasterRepository
 
         await using var conn = _db.Create();
         await using var existsCmd = conn.CreateCommand();
-        existsCmd.CommandText = "SELECT SourceCustomerId FROM master_record";
+        existsCmd.CommandText = "SELECT CustomerId FROM master_record";
         var existing = new HashSet<string>(StringComparer.Ordinal);
         await using (var r = await existsCmd.ExecuteReaderAsync(ct))
         {
@@ -35,7 +35,7 @@ public sealed class MasterRepository : IMasterRepository
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 INSERT INTO master_record
-                    (SourceCustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
+                    (CustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
                 VALUES
                     (@id, @date, 0, @remarks, 0, @now, @now)
                 """;
@@ -72,7 +72,7 @@ public sealed class MasterRepository : IMasterRepository
     {
         if (customerIds.Count == 0) return Array.Empty<MasterRecord>();
         var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
-        return await QueryAsync($"SELECT * FROM master_record WHERE SourceCustomerId IN ({placeholders})",
+        return await QueryAsync($"SELECT * FROM master_record WHERE CustomerId IN ({placeholders})",
             c => { var i = 0; foreach (var id in customerIds) c.Parameters.Add(NewParam($"@v{i++}", id)); }, ct);
     }
 
@@ -84,14 +84,46 @@ public sealed class MasterRepository : IMasterRepository
     }
 
     public async Task<IReadOnlyList<MasterRecord>> GetByBatchFileAsync(string batchFile, CancellationToken ct = default)
-        => await QueryAsync("SELECT * FROM master_record WHERE BatchFile=@b ORDER BY Id",
+        => await QueryAsync("""
+            SELECT DISTINCT m.* FROM master_record m
+            JOIN master_record_batch b ON b.MasterRecordId=m.Id
+            WHERE b.BatchFile=@b ORDER BY m.Id
+            """,
             c => c.Parameters.Add(NewParam("@b", batchFile)), ct);
 
     public async Task<MasterRecord?> GetByBatchLineAsync(string batchFile, int record20Line, CancellationToken ct = default)
     {
-        var rows = await QueryAsync("SELECT * FROM master_record WHERE BatchFile=@b AND BatchRecordLine=@l",
+        var rows = await QueryAsync("""
+            SELECT m.* FROM master_record m
+            JOIN master_record_batch b ON b.MasterRecordId=m.Id
+            WHERE b.BatchFile=@b AND b.Record20LineNumber=@l
+            ORDER BY b.Id DESC
+            """,
             c => { c.Parameters.Add(NewParam("@b", batchFile)); c.Parameters.Add(NewParam("@l", record20Line)); }, ct);
         return rows.Count > 0 ? rows[0] : null;
+    }
+
+    public async Task<IReadOnlyList<CustomerBatchRecord>> GetBatchHistoryAsync(string customerId, CancellationToken ct = default)
+    {
+        var result = new List<CustomerBatchRecord>();
+        await using var conn = _db.Create();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT * FROM master_record_batch WHERE CustomerId=@id ORDER BY BatchedAt, Id";
+        cmd.Parameters.Add(NewParam("@id", customerId));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            result.Add(new CustomerBatchRecord
+            {
+                Id = Convert.ToInt64(r["Id"]),
+                MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
+                CustomerId = r["CustomerId"] as string ?? string.Empty,
+                BatchFile = r["BatchFile"] as string ?? string.Empty,
+                Record20LineNumber = r["Record20LineNumber"] is DBNull ? null : Convert.ToInt32(r["Record20LineNumber"]),
+                BatchedAt = r["BatchedAt"] is string value && DateTime.TryParse(value, out var parsed) ? parsed : DateTime.MinValue,
+            });
+        }
+        return result;
     }
 
     public async Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, string? clientType = null, CancellationToken ct = default)
@@ -105,7 +137,7 @@ public sealed class MasterRepository : IMasterRepository
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO master_record
-                (SourceCustomerId, ClientType, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
+                (CustomerId, ClientType, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
             VALUES
                 (@id, @ct, @date, 0, @remarks, 0, @now, @now)
             """;
@@ -116,7 +148,7 @@ public sealed class MasterRepository : IMasterRepository
         cmd.Parameters.Add(NewParam("@now", now));
         await cmd.ExecuteNonQueryAsync(ct);
 
-        var rows = await QueryAsync("SELECT * FROM master_record WHERE SourceCustomerId=@id",
+        var rows = await QueryAsync("SELECT * FROM master_record WHERE CustomerId=@id",
             c => c.Parameters.Add(NewParam("@id", customerId)), ct);
         return rows[0];
     }
@@ -201,6 +233,29 @@ public sealed class MasterRepository : IMasterRepository
             }
         }
 
+        foreach (var recordId in ids)
+        {
+            await using (var delete = conn.CreateCommand())
+            {
+                delete.Transaction = localTx;
+                delete.CommandText = "DELETE FROM master_record_batch WHERE MasterRecordId=@id AND BatchFile=@batch";
+                delete.Parameters.Add(NewParam("@id", recordId));
+                delete.Parameters.Add(NewParam("@batch", batchFile));
+                await delete.ExecuteNonQueryAsync(ct);
+            }
+
+            await using var insert = conn.CreateCommand();
+            insert.Transaction = localTx;
+            insert.CommandText = """
+                INSERT INTO master_record_batch (MasterRecordId, CustomerId, BatchFile, Record20LineNumber, BatchedAt)
+                SELECT Id, CustomerId, @batch, BatchRecordLine, @now FROM master_record WHERE Id=@id
+                """;
+            insert.Parameters.Add(NewParam("@id", recordId));
+            insert.Parameters.Add(NewParam("@batch", batchFile));
+            insert.Parameters.Add(NewParam("@now", now));
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
         await tx.CommitAsync(ct);
         return ids.Count;
     }
@@ -249,14 +304,14 @@ public sealed class MasterRepository : IMasterRepository
             cmd.Transaction = localTx;
             cmd.CommandText = """
                 INSERT INTO master_record_response
-                    (MasterRecordId, SourceCustomerId, BatchFile, ResponseFileNumber, ResponseFileName, LineNumber,
+                    (MasterRecordId, CustomerId, BatchFile, ResponseFileNumber, ResponseFileName, LineNumber,
                      InputRecordLineNumber, AckNumber, RecordStatus, CkycReferenceNumber, CkycNumber, RejectionRemark,
                      ReadAt, Remarks, RawData, CreatedAt)
                 VALUES
                     (@mid, @sid, @bf, @rfno, @rfile, @ln, @inln, @ack, @st, @cref, @ckyc, @rej, @read, @rm, @raw, @now)
                 """;
             cmd.Parameters.Add(NewParam("@mid", response.MasterRecordId));
-            cmd.Parameters.Add(NewParam("@sid", response.SourceCustomerId));
+            cmd.Parameters.Add(NewParam("@sid", response.CustomerId));
             cmd.Parameters.Add(NewParam("@bf", response.BatchFile));
             cmd.Parameters.Add(NewParam("@rfno", response.ResponseFileNumber));
             cmd.Parameters.Add(NewParam("@rfile", response.ResponseFileName));
@@ -284,11 +339,13 @@ public sealed class MasterRepository : IMasterRepository
                        LastResponseStatus=@rst, LastResponseCkycReference=@cref, LastResponseCkycNumber=@ckyc,
                        LastResponseRejectionRemark=@rej, LastResponseReadAt=@read, LastResponseRemarks=@rm,
                        UpdatedAt=@now
-                 WHERE Id=@mid
+                 WHERE Id=@mid AND BatchFile=@bf
+                   AND (LastResponseFileNumber IS NULL OR @rfno >= LastResponseFileNumber)
                 """;
             u.Parameters.Add(NewParam("@st", (int)MasterRecordStatus.ResponseRead));
             u.Parameters.Add(NewParam("@rst", response.RecordStatus));
             u.Parameters.Add(NewParam("@mid", response.MasterRecordId));
+            u.Parameters.Add(NewParam("@bf", response.BatchFile));
             u.Parameters.Add(NewParam("@now", nowStr));
             u.Parameters.Add(NewParam("@rfno", response.ResponseFileNumber));
             u.Parameters.Add(NewParam("@rfile", response.ResponseFileName));
@@ -320,7 +377,7 @@ public sealed class MasterRepository : IMasterRepository
             {
                 Id = r.GetInt64(r.GetOrdinal("Id")),
                 MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
-                SourceCustomerId = r["SourceCustomerId"] as string ?? string.Empty,
+                CustomerId = r["CustomerId"] as string ?? string.Empty,
                 BatchFile = r["BatchFile"] as string,
                 ResponseFileNumber = Convert.ToInt32(r["ResponseFileNumber"]),
                 ResponseFileName = r["ResponseFileName"] as string,
@@ -340,6 +397,61 @@ public sealed class MasterRepository : IMasterRepository
         return result;
     }
 
+    public async Task<bool> HasUploadResponseFileAsync(string sourceHash, string responseFileName, CancellationToken ct = default)
+    {
+        await using var conn = _db.Create();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(1) FROM upload_response_file WHERE SourceHash=@hash AND ResponseFileName=@name";
+        cmd.Parameters.Add(NewParam("@hash", sourceHash));
+        cmd.Parameters.Add(NewParam("@name", responseFileName));
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) > 0;
+    }
+
+    public async Task<bool> TryAddUploadResponseFileAsync(UploadResponseFile responseFile, CancellationToken ct = default)
+    {
+        await using var conn = _db.Create();
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        var localTx = (DbTransaction)tx;
+
+        await using (var exists = conn.CreateCommand())
+        {
+            exists.Transaction = localTx;
+            exists.CommandText = "SELECT COUNT(1) FROM upload_response_file WHERE SourceHash=@hash AND ResponseFileName=@name";
+            exists.Parameters.Add(NewParam("@hash", responseFile.SourceHash));
+            exists.Parameters.Add(NewParam("@name", responseFile.ResponseFileName));
+            if (Convert.ToInt32(await exists.ExecuteScalarAsync(ct)) > 0)
+            {
+                await tx.RollbackAsync(ct);
+                return false;
+            }
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = localTx;
+        cmd.CommandText = """
+            INSERT INTO upload_response_file
+                (BatchFile, ResponseFileName, ResponseFileNumber, TotalRecords, TotalProcessed,
+                 UnderProcessing, Failed, ResponseTimestamp, RawHeaderData, SourceArchiveName, SourceHash, CreatedAt)
+            VALUES
+                (@batch, @name, @number, @total, @processed, @under, @failed, @timestamp, @raw, @archive, @hash, @now)
+            """;
+        cmd.Parameters.Add(NewParam("@batch", responseFile.BatchFile));
+        cmd.Parameters.Add(NewParam("@name", responseFile.ResponseFileName));
+        cmd.Parameters.Add(NewParam("@number", responseFile.ResponseFileNumber));
+        cmd.Parameters.Add(NewParam("@total", responseFile.TotalRecords));
+        cmd.Parameters.Add(NewParam("@processed", responseFile.TotalProcessed));
+        cmd.Parameters.Add(NewParam("@under", responseFile.UnderProcessing));
+        cmd.Parameters.Add(NewParam("@failed", responseFile.Failed));
+        cmd.Parameters.Add(NewParam("@timestamp", responseFile.ResponseTimestamp));
+        cmd.Parameters.Add(NewParam("@raw", responseFile.RawHeaderData));
+        cmd.Parameters.Add(NewParam("@archive", responseFile.SourceArchiveName));
+        cmd.Parameters.Add(NewParam("@hash", responseFile.SourceHash));
+        cmd.Parameters.Add(NewParam("@now", DateTime.UtcNow.ToString("o")));
+        await cmd.ExecuteNonQueryAsync(ct);
+        await tx.CommitAsync(ct);
+        return true;
+    }
+
     public async Task<int> LogAttemptAsync(MasterRecordAttempt attempt, CancellationToken ct = default)
     {
         var attemptNo = await NextAttemptNumberAsync(attempt.MasterRecordId, attempt.Stage, ct);
@@ -350,12 +462,12 @@ public sealed class MasterRepository : IMasterRepository
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO master_record_attempt
-                (MasterRecordId, SourceCustomerId, Stage, ActivityTypeId, Attempt, Status, Success, Error, Remarks, AttemptedAt, NextRetryAt, CreatedAt)
+                (MasterRecordId, CustomerId, Stage, ActivityTypeId, Attempt, Status, Success, Error, Remarks, AttemptedAt, NextRetryAt, CreatedAt)
             VALUES
                 (@mid, @sid, @stage, @atid, @attempt, @st, @ok, @err, @rm, @at, @next, @now)
             """;
         cmd.Parameters.Add(NewParam("@mid", attempt.MasterRecordId));
-        cmd.Parameters.Add(NewParam("@sid", attempt.SourceCustomerId));
+        cmd.Parameters.Add(NewParam("@sid", attempt.CustomerId));
         cmd.Parameters.Add(NewParam("@stage", attempt.Stage));
         cmd.Parameters.Add(NewParam("@atid", attempt.ActivityTypeId));
         cmd.Parameters.Add(NewParam("@attempt", attemptNo));
@@ -521,7 +633,7 @@ public sealed class MasterRepository : IMasterRepository
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO master_record_reattempt
-                (MasterRecordId, SourceCustomerId, Reason, PreviousStatus, PreviousReconStatus,
+                (MasterRecordId, CustomerId, Reason, PreviousStatus, PreviousReconStatus,
                  PreviousResponseStatus, PreviousResponseAckNumber, PreviousResponseCkycReference,
                  PreviousResponseCkycNumber, PreviousResponseRejectionRemark, PreviousResponseReadAt,
                  PreviousRetryCount, ReattemptCount, ReattemptedAt, CreatedAt)
@@ -530,7 +642,7 @@ public sealed class MasterRepository : IMasterRepository
                  @prej, @pread, @pretry, @rcount, @rat, @now)
             """;
         cmd.Parameters.Add(NewParam("@mid", reattempt.MasterRecordId));
-        cmd.Parameters.Add(NewParam("@sid", reattempt.SourceCustomerId));
+        cmd.Parameters.Add(NewParam("@sid", reattempt.CustomerId));
         cmd.Parameters.Add(NewParam("@reason", reattempt.Reason));
         cmd.Parameters.Add(NewParam("@pstatus", reattempt.PreviousStatus));
         cmd.Parameters.Add(NewParam("@precon", reattempt.PreviousReconStatus));
@@ -563,7 +675,7 @@ public sealed class MasterRepository : IMasterRepository
             {
                 Id = r.GetInt64(r.GetOrdinal("Id")),
                 MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
-                SourceCustomerId = r["SourceCustomerId"] as string ?? string.Empty,
+                CustomerId = r["CustomerId"] as string ?? string.Empty,
                 Reason = r["Reason"] as string,
                 PreviousStatus = r["PreviousStatus"] is DBNull ? null : Convert.ToInt32(r["PreviousStatus"]),
                 PreviousReconStatus = r["PreviousReconStatus"] as string,
@@ -651,7 +763,7 @@ public sealed class MasterRepository : IMasterRepository
             result.Add(new MasterRecord
             {
                 Id = r.GetInt64(r.GetOrdinal("Id")),
-                SourceCustomerId = r["SourceCustomerId"] as string ?? string.Empty,
+                CustomerId = r["CustomerId"] as string ?? string.Empty,
                 BusinessDate = ReadDate(r, "BusinessDate"),
                 Status = (MasterRecordStatus)Convert.ToInt32(r["Status"]),
                 Remarks = r["Remarks"] as string,

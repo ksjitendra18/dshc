@@ -25,7 +25,7 @@ Edit these fields with the actual customer data you want to test:
 
 | Field | What to change | Notes / constraints |
 |-------|----------------|---------------------|
-| `sourceCustomerId` | your customer id | any lettered id, e.g. `CUST-RETAIL-0001` |
+| `customerId` | your customer id | any lettered id, e.g. `CUST-RETAIL-0001` |
 | `name` | title / first / middle / last | `firstName` **must contain a letter** |
 | `motherName` | (or `fatherName`/`spouseName`) | **At least one of Mother/Father/Spouse is mandatory** — the shipped `samples/customer.json` has none and would be **skipped at `build-zip`**. Keep a family name. |
 | `dateOfBirth` | `DD-MM-YYYY` | **mandatory** (empty DOB → skipped at `build-zip`) |

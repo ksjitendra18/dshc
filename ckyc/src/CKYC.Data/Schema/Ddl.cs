@@ -18,7 +18,7 @@ public static class Ddl
         """
         CREATE TABLE IF NOT EXISTS master_record (
             Id                           INTEGER PRIMARY KEY AUTOINCREMENT,
-            SourceCustomerId             VARCHAR(50),
+            CustomerId             VARCHAR(50),
             ClientType                   VARCHAR(1),
             BusinessDate                 TEXT,
             Status                       INTEGER,
@@ -67,7 +67,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_20 (
             Id                              INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId                  INTEGER,
-            SourceCustomerId                VARCHAR(50),
+            CustomerId                VARCHAR(50),
             SearchKey                       VARCHAR(20),
             KycType                         VARCHAR(1),
             NameTitle                       VARCHAR(4),
@@ -126,6 +126,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_30 (
             Id                           INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId               INTEGER,
+            CustomerId                   VARCHAR(50),
             Record20LineNumber           INTEGER,
             OvdType                      VARCHAR(1),
             ModeOfAadhaarVerification    VARCHAR(50),
@@ -153,6 +154,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_40 (
             Id                         INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId             INTEGER,
+            CustomerId                 VARCHAR(50),
             Record20LineNumber         INTEGER,
             PermLine1                  VARCHAR(60),
             PermLine2                  VARCHAR(60),
@@ -186,6 +188,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_50 (
             Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId              INTEGER,
+            CustomerId                  VARCHAR(50),
             Record20LineNumber          INTEGER,
             EmailAddress                VARCHAR(254),
             CountryCode                 VARCHAR(4),
@@ -201,6 +204,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_60 (
             Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId              INTEGER,
+            CustomerId                  VARCHAR(50),
             Record20LineNumber          INTEGER,
             RelatedPersonType           VARCHAR(1),
             CkycNumberOfRelatedPerson   VARCHAR(14)
@@ -212,6 +216,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS kyc_record_70 (
             Id                         INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId             INTEGER,
+            CustomerId                 VARCHAR(50),
             Record20LineNumber         INTEGER,
             Remarks                    VARCHAR(200),
             VideoKycWithoutOfficial    VARCHAR(1),
@@ -247,6 +252,18 @@ public static class Ddl
             CreatedAt      TEXT
         )
         """,
+
+        // ---- Append-only customer membership in generated upload batches ----
+        """
+        CREATE TABLE IF NOT EXISTS master_record_batch (
+            Id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            MasterRecordId     INTEGER,
+            CustomerId         VARCHAR(50),
+            BatchFile          VARCHAR(260),
+            Record20LineNumber INTEGER,
+            BatchedAt          TEXT
+        )
+        """,
         """
         CREATE TABLE IF NOT EXISTS fvu_run (
             Id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,7 +284,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS master_record_response (
             Id                     INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId         INTEGER,
-            SourceCustomerId       VARCHAR(50),
+            CustomerId       VARCHAR(50),
             BatchFile              VARCHAR(260),
             ResponseFileNumber     INTEGER,
             ResponseFileName       VARCHAR(260),
@@ -285,12 +302,30 @@ public static class Ddl
         )
         """,
 
+        """
+        CREATE TABLE IF NOT EXISTS upload_response_file (
+            Id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            BatchFile             VARCHAR(260),
+            ResponseFileName      VARCHAR(260),
+            ResponseFileNumber    INTEGER,
+            TotalRecords          INTEGER,
+            TotalProcessed        INTEGER,
+            UnderProcessing       INTEGER,
+            Failed                INTEGER,
+            ResponseTimestamp     VARCHAR(30),
+            RawHeaderData         TEXT,
+            SourceArchiveName     VARCHAR(260),
+            SourceHash            VARCHAR(128),
+            CreatedAt             TEXT
+        )
+        """,
+
         // ---- Stage attempt / retry audit trail ----
         """
         CREATE TABLE IF NOT EXISTS master_record_attempt (
             Id                INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId    INTEGER,
-            SourceCustomerId  VARCHAR(50),
+            CustomerId  VARCHAR(50),
             Stage             VARCHAR(50),
             ActivityTypeId    INTEGER,
             Attempt           INTEGER,
@@ -340,7 +375,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS master_record_reattempt (
             Id                              INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId                  INTEGER,
-            SourceCustomerId                VARCHAR(50),
+            CustomerId                VARCHAR(50),
             Reason                          VARCHAR(1000),
             PreviousStatus                  INTEGER,
             PreviousReconStatus             VARCHAR(50),
@@ -361,7 +396,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS search_request (
             Id                       INTEGER PRIMARY KEY AUTOINCREMENT,
             ExternalRequestId        VARCHAR(50),
-            SourceCustomerId         VARCHAR(50),
+            CustomerId         VARCHAR(50),
             ClientType               VARCHAR(1),
             SearchOption             INTEGER,
             IdentityTypeAndNumber    VARCHAR(2000),
@@ -491,6 +526,49 @@ public static class Ddl
             CreatedAt              TEXT
         )
         """,
+
+        // ---- CKYCR download response: immutable file, record lines and ZIP artifacts ----
+        """
+        CREATE TABLE IF NOT EXISTS download_response_file (
+            Id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            ResponseFileName   VARCHAR(260),
+            ResponseFileNumber INTEGER,
+            FiCode             VARCHAR(6),
+            RegionCode         VARCHAR(11),
+            ClientType         VARCHAR(1),
+            TotalRecords       INTEGER,
+            Version            VARCHAR(20),
+            ResponseDate       VARCHAR(30),
+            RawHeaderData      TEXT,
+            SourceArchiveName  VARCHAR(260),
+            SourceHash         VARCHAR(128),
+            CreatedAt          TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS download_response_line (
+            Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            DownloadResponseFileId  INTEGER,
+            SourceEntryPath          VARCHAR(1000),
+            RecordType              VARCHAR(2),
+            LineNumber              INTEGER,
+            InputRecord20LineNumber INTEGER,
+            CkycNumber              VARCHAR(15),
+            RawData                 TEXT,
+            CreatedAt               TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS download_response_artifact (
+            Id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            DownloadResponseFileId INTEGER,
+            EntryPath              VARCHAR(1000),
+            FileName               VARCHAR(260),
+            Size                   INTEGER,
+            Sha256                 VARCHAR(128),
+            CreatedAt              TEXT
+        )
+        """,
         // ---- LEGAL ENTITY record tables (client type L). Deliberately separate from the
         //      individual kyc_record_* tables — a legal entity never shares a row with a
         //      retail customer. Same schema philosophy (length only, no NOT NULL/CHECK/FK). ----
@@ -498,7 +576,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_20 (
             Id                              INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId                  INTEGER,
-            SourceCustomerId                VARCHAR(50),
+            CustomerId                VARCHAR(50),
             SearchKey                       VARCHAR(20),
             EntityName                      VARCHAR(99),
             EntityConstitution              VARCHAR(2),
@@ -524,6 +602,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_30 (
             Id                           INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId               INTEGER,
+            CustomerId                   VARCHAR(50),
             Record20LineNumber           INTEGER,
             CertificateOfIncorporation   VARCHAR(125),
             Cin                          VARCHAR(21),
@@ -564,6 +643,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_40 (
             Id                        INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId            INTEGER,
+            CustomerId                VARCHAR(50),
             Record20LineNumber        INTEGER,
             RegLine1                  VARCHAR(60),
             RegLine2                  VARCHAR(60),
@@ -598,6 +678,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_50 (
             Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId              INTEGER,
+            CustomerId                  VARCHAR(50),
             Record20LineNumber          INTEGER,
             CountryCode1                VARCHAR(6),
             MobileNumber1               VARCHAR(15),
@@ -613,6 +694,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_60 (
             Id                         INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId             INTEGER,
+            CustomerId                 VARCHAR(50),
             Record20LineNumber         INTEGER,
             Relation                   VARCHAR(60),
             CkycNumber                 VARCHAR(14),
@@ -626,6 +708,7 @@ public static class Ddl
         CREATE TABLE IF NOT EXISTS legal_entity_record_70 (
             Id                         INTEGER PRIMARY KEY AUTOINCREMENT,
             MasterRecordId             INTEGER,
+            CustomerId                 VARCHAR(50),
             Record20LineNumber         INTEGER,
             Remarks                    VARCHAR(200),
             CertifiedCopies            VARCHAR(1),
@@ -647,16 +730,16 @@ public static class Ddl
         )
         """,
         "CREATE INDEX IF NOT EXISTS ix_le_record20_master ON legal_entity_record_20(MasterRecordId)",
-        "CREATE INDEX IF NOT EXISTS ix_le_record20_customer ON legal_entity_record_20(SourceCustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record30_master ON legal_entity_record_30(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record40_master ON legal_entity_record_40(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record50_master ON legal_entity_record_50(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record60_master ON legal_entity_record_60(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record70_master ON legal_entity_record_70(MasterRecordId)",
-        "CREATE INDEX IF NOT EXISTS ix_master_customer ON master_record(SourceCustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_master_status ON master_record(Status)",
         "CREATE INDEX IF NOT EXISTS ix_master_response_master ON master_record_response(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_upload_response_file_identity ON upload_response_file(SourceHash, ResponseFileName)",
         "CREATE INDEX IF NOT EXISTS ix_master_attempt_master ON master_record_attempt(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_master_record_batch_master ON master_record_batch(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_master_reattempt_master ON master_record_reattempt(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_activity_code ON activity_type(Code)",
         "CREATE INDEX IF NOT EXISTS ix_status_value ON status_master(StatusValue)",
@@ -666,6 +749,9 @@ public static class Ddl
         "CREATE INDEX IF NOT EXISTS ix_search_batch_date ON search_batch(BusinessDate, FileSequence)",
         "CREATE INDEX IF NOT EXISTS ix_search_response_request ON search_response(SearchRequestId)",
         "CREATE INDEX IF NOT EXISTS ix_search_response_file_batch ON search_response_file(SearchBatchId)",
+        "CREATE INDEX IF NOT EXISTS ix_download_response_file_hash ON download_response_file(SourceHash, ResponseFileName)",
+        "CREATE INDEX IF NOT EXISTS ix_download_response_line_file ON download_response_line(DownloadResponseFileId)",
+        "CREATE INDEX IF NOT EXISTS ix_download_response_artifact_file ON download_response_artifact(DownloadResponseFileId)",
     };
 
     /// <summary>
@@ -677,7 +763,51 @@ public static class Ddl
     public static readonly string[] PostMigrationStatements =
     {
         "CREATE INDEX IF NOT EXISTS ix_master_batchline ON master_record(BatchFile, BatchRecordLine)",
+        "CREATE INDEX IF NOT EXISTS ix_master_customer_id ON master_record(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_master_record_batch_customer ON master_record_batch(CustomerId, BatchedAt)",
+        "CREATE INDEX IF NOT EXISTS ix_master_record_batch_fileline ON master_record_batch(BatchFile, Record20LineNumber)",
         "CREATE INDEX IF NOT EXISTS ix_search_response_file_hash ON search_response_file(SourceHash)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record20_customer ON kyc_record_20(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record30_customer ON kyc_record_30(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record40_customer ON kyc_record_40(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record50_customer ON kyc_record_50(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record60_customer ON kyc_record_60(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record70_customer ON kyc_record_70(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record20_customer_id ON legal_entity_record_20(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record30_customer ON legal_entity_record_30(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record40_customer ON legal_entity_record_40(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record50_customer ON legal_entity_record_50(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record60_customer ON legal_entity_record_60(CustomerId)",
+        "CREATE INDEX IF NOT EXISTS ix_le_record70_customer ON legal_entity_record_70(CustomerId)",
+        """
+        INSERT INTO master_record_batch (MasterRecordId, CustomerId, BatchFile, Record20LineNumber, BatchedAt)
+        SELECT m.Id, m.CustomerId, m.BatchFile, m.BatchRecordLine, COALESCE(m.BatchedAt,m.UpdatedAt,m.CreatedAt)
+          FROM master_record m
+         WHERE m.BatchFile IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM master_record_batch b
+                WHERE b.MasterRecordId=m.Id AND b.BatchFile=m.BatchFile
+           )
+        """,
+    };
+
+    /// <summary>Tables whose legacy <c>SourceCustomerId</c> column is renamed during upgrade.</summary>
+    public static readonly string[] CustomerIdTables =
+    {
+        "master_record",
+        "kyc_record_20", "kyc_record_30", "kyc_record_40", "kyc_record_50", "kyc_record_60", "kyc_record_70",
+        "legal_entity_record_20", "legal_entity_record_30", "legal_entity_record_40", "legal_entity_record_50",
+        "legal_entity_record_60", "legal_entity_record_70",
+        "master_record_response", "master_record_attempt", "master_record_reattempt", "search_request",
+    };
+
+    /// <summary>Customer-scoped tables that can derive the identifier from master_record.</summary>
+    public static readonly string[] MasterLinkedCustomerIdTables =
+    {
+        "kyc_record_20", "kyc_record_30", "kyc_record_40", "kyc_record_50", "kyc_record_60", "kyc_record_70",
+        "legal_entity_record_20", "legal_entity_record_30", "legal_entity_record_40", "legal_entity_record_50",
+        "legal_entity_record_60", "legal_entity_record_70",
+        "master_record_response", "master_record_attempt", "master_record_reattempt",
     };
 
     /// <summary>
@@ -746,7 +876,7 @@ public static class Ddl
     {
         """
         INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
-        SELECT 0,'PND','Pending','Newly fetched daily source customer; awaiting CRM enrichment.',0,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')
+        SELECT 0,'PND','Pending','Newly fetched daily customer; awaiting CRM enrichment.',0,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')
         WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=0)
         """,
         """
@@ -809,6 +939,26 @@ public static class Ddl
     /// </summary>
     public static readonly IReadOnlyList<(string Table, string Column, string Sql)> AdditiveMigrations = new[]
     {
+        // Organization-owned customer identifier. Initialization renames the legacy
+        // SourceCustomerId column, or adds CustomerId where a child table never had it.
+        ("master_record", "CustomerId", "ALTER TABLE master_record ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_20", "CustomerId", "ALTER TABLE kyc_record_20 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_30", "CustomerId", "ALTER TABLE kyc_record_30 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_40", "CustomerId", "ALTER TABLE kyc_record_40 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_50", "CustomerId", "ALTER TABLE kyc_record_50 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_60", "CustomerId", "ALTER TABLE kyc_record_60 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("kyc_record_70", "CustomerId", "ALTER TABLE kyc_record_70 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_20", "CustomerId", "ALTER TABLE legal_entity_record_20 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_30", "CustomerId", "ALTER TABLE legal_entity_record_30 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_40", "CustomerId", "ALTER TABLE legal_entity_record_40 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_50", "CustomerId", "ALTER TABLE legal_entity_record_50 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_60", "CustomerId", "ALTER TABLE legal_entity_record_60 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("legal_entity_record_70", "CustomerId", "ALTER TABLE legal_entity_record_70 ADD COLUMN CustomerId VARCHAR(50)"),
+        ("master_record_response", "CustomerId", "ALTER TABLE master_record_response ADD COLUMN CustomerId VARCHAR(50)"),
+        ("master_record_attempt", "CustomerId", "ALTER TABLE master_record_attempt ADD COLUMN CustomerId VARCHAR(50)"),
+        ("master_record_reattempt", "CustomerId", "ALTER TABLE master_record_reattempt ADD COLUMN CustomerId VARCHAR(50)"),
+        ("search_request", "CustomerId", "ALTER TABLE search_request ADD COLUMN CustomerId VARCHAR(50)"),
+
         ("kyc_record_20", "Minor", "ALTER TABLE kyc_record_20 ADD COLUMN Minor VARCHAR(1)"),
         ("kyc_record_20", "DoBMatchWithOvd", "ALTER TABLE kyc_record_20 ADD COLUMN DoBMatchWithOvd VARCHAR(1)"),
         ("kyc_record_20", "NameMatchWithOvd", "ALTER TABLE kyc_record_20 ADD COLUMN NameMatchWithOvd VARCHAR(1)"),

@@ -90,7 +90,7 @@ public sealed class CkycBatchGenerator : IBatchGenerator
             else
             {
                 skipped.Add(new SkippedRecord(
-                    r.SourceCustomerId,
+                    r.CustomerId,
                     $"{r.Name.FirstName} {r.Name.LastName}".Trim(),
                     errors));
             }
@@ -101,7 +101,7 @@ public sealed class CkycBatchGenerator : IBatchGenerator
 
     private static string FormatValidationFailures(IEnumerable<SkippedRecord> skipped) =>
         string.Join(" ", skipped.Select(s =>
-            $"{s.SourceCustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
+            $"{s.CustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
 
     private static HashSet<string> EnumerateDocs(Individual r)
     {

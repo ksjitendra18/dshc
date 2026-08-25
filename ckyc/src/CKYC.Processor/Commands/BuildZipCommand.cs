@@ -19,10 +19,10 @@ public sealed class BuildZipCommand : ICommand
             return 0;
         }
 
-        var customerIds = saved.Select(r => r.SourceCustomerId).ToList();
-        var individuals = await ctx.Individuals.GetBySourceCustomerIdsAsync(customerIds, ct);
+        var customerIds = saved.Select(r => r.CustomerId).ToList();
+        var individuals = await ctx.Individuals.GetByCustomerIdsAsync(customerIds, ct);
         var orderedIndividuals = customerIds
-            .Select(id => individuals.FirstOrDefault(i => i.SourceCustomerId == id))
+            .Select(id => individuals.FirstOrDefault(i => i.CustomerId == id))
             .Where(i => i is not null)
             .Cast<Core.Domain.Individual>()
             .ToList();
@@ -37,8 +37,8 @@ public sealed class BuildZipCommand : ICommand
 
         // Only the records that actually made it into the batch are marked as batched —
         // records excluded by validation stay in the Saved state so they can be fixed/retried.
-        var skippedIds = batch.Skipped is null ? new HashSet<string>() : new HashSet<string>(batch.Skipped.Select(s => s.SourceCustomerId));
-        var batchedRecords = saved.Where(r => !skippedIds.Contains(r.SourceCustomerId)).ToList();
+        var skippedIds = batch.Skipped is null ? new HashSet<string>() : new HashSet<string>(batch.Skipped.Select(s => s.CustomerId));
+        var batchedRecords = saved.Where(r => !skippedIds.Contains(r.CustomerId)).ToList();
         var batchedIds = batchedRecords.Select(r => r.Id).ToList();
 
         // Capture each record's record-20 line number in the batch so a CERSAI response
@@ -46,7 +46,7 @@ public sealed class BuildZipCommand : ICommand
         var lineByRecord = new Dictionary<long, int>();
         if (batch.Record20Lines is not null)
             foreach (var r in batchedRecords)
-                if (batch.Record20Lines.TryGetValue(r.SourceCustomerId, out var line))
+                if (batch.Record20Lines.TryGetValue(r.CustomerId, out var line))
                     lineByRecord[r.Id] = line;
 
         await ctx.Master.MarkBatchAsync(batchedIds, batch.UploadFileName, lineByRecord, ct);
@@ -58,7 +58,7 @@ public sealed class BuildZipCommand : ICommand
             await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
             {
                 MasterRecordId = r.Id,
-                SourceCustomerId = r.SourceCustomerId,
+                CustomerId = r.CustomerId,
                 Stage = "BuildZip",
                 ActivityTypeId = buildActivity?.Id,
                 Status = (int)MasterRecordStatus.Batched,
@@ -66,11 +66,11 @@ public sealed class BuildZipCommand : ICommand
                 Remarks = $"Batched into '{batch.UploadFileName}' at record-20 line {lineByRecord.GetValueOrDefault(r.Id)}",
             }, ct);
         foreach (var s in batch.Skipped ?? Array.Empty<SkippedRecord>())
-            foreach (var r in saved.Where(x => x.SourceCustomerId == s.SourceCustomerId))
+            foreach (var r in saved.Where(x => x.CustomerId == s.CustomerId))
                 await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
                 {
                     MasterRecordId = r.Id,
-                    SourceCustomerId = r.SourceCustomerId,
+                    CustomerId = r.CustomerId,
                     Stage = "BuildZip",
                     ActivityTypeId = buildActivity?.Id,
                     Status = (int)MasterRecordStatus.Saved,
@@ -87,7 +87,7 @@ public sealed class BuildZipCommand : ICommand
             Console.WriteLine($"[build-zip]   Skipped     : {batch.SkippedCount} record(s) failed validation and were excluded:");
             foreach (var s in batch.Skipped!)
             {
-                Console.WriteLine($"    ! {s.SourceCustomerId} ({s.CustomerName})");
+                Console.WriteLine($"    ! {s.CustomerId} ({s.CustomerName})");
                 foreach (var e in s.Errors)
                     Console.WriteLine($"        - [{e.RecordType}/{e.FieldName}] {e.ErrorDescription}");
             }

@@ -1,7 +1,7 @@
 namespace CKYC.Core.Domain;
 
 /// <summary>
-/// Row of the master table: the daily incoming source customer id together with the
+/// Row of the master table: the daily incoming customer id together with the
 /// single source of truth for where the record is in the CKYC pipeline.
 /// <para>
 /// The <see cref="Status"/> value tells you the current stage (e.g. "waiting for batch",
@@ -15,7 +15,8 @@ namespace CKYC.Core.Domain;
 public sealed class MasterRecord
 {
     public long Id { get; set; }
-    public string SourceCustomerId { get; set; } = string.Empty;
+    /// <summary>Organization-owned customer key used to correlate internal records.</summary>
+    public string CustomerId { get; set; } = string.Empty;
     public DateTime BusinessDate { get; set; }
     public MasterRecordStatus Status { get; set; } = MasterRecordStatus.Pending;
     public string? Remarks { get; set; }

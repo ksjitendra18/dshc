@@ -24,9 +24,9 @@ public sealed class InsertCommand : ICommand
     {
         var individual = BuildIndividual(ctx, args);
         Normalize(individual);
-        if (string.IsNullOrWhiteSpace(individual.SourceCustomerId))
+        if (string.IsNullOrWhiteSpace(individual.CustomerId))
         {
-            Console.Error.WriteLine("[insert] A source customer id is required (--customer-id or sourceCustomerId in --file).");
+            Console.Error.WriteLine("[insert] A customer id is required (--customer-id or customerId in --file).");
             return 1;
         }
         if (!individual.Name.FirstName.Any(char.IsLetter))
@@ -40,10 +40,10 @@ public sealed class InsertCommand : ICommand
 
         // Get-or-create the master row, then save the record tables.
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
-        var master = await ctx.Master.EnsureAsync(individual.SourceCustomerId, businessDate, ct: ct);
+        var master = await ctx.Master.EnsureAsync(individual.CustomerId, businessDate, ct: ct);
 
         individual.MasterRecordId = master.Id;
-        individual.SourceCustomerId = master.SourceCustomerId;
+        individual.CustomerId = master.CustomerId;
 
         var save = await ctx.Individuals.SaveAsync(individual, ct);
         if (!save.Success)
@@ -54,7 +54,7 @@ public sealed class InsertCommand : ICommand
 
         await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
 
-        Console.WriteLine($"[insert] Created '{individual.SourceCustomerId}' ({individual.Name.FirstName} {individual.Name.LastName})");
+        Console.WriteLine($"[insert] Created '{individual.CustomerId}' ({individual.Name.FirstName} {individual.Name.LastName})");
         Console.WriteLine($"[insert]   {save.Summary}");
         Console.WriteLine("[insert] Next: `build-zip` then `fvu` to validate and process.");
         return 0;
@@ -62,7 +62,7 @@ public sealed class InsertCommand : ICommand
 
     internal static void ApplyValidDefaults(AppContext ctx, Individual individual)
     {
-        var defaults = ctx.CrmData.GetCustomer(individual.SourceCustomerId);
+        var defaults = ctx.CrmData.GetCustomer(individual.CustomerId);
 
         if (individual.Proofs.Count == 0) individual.Proofs = defaults.Proofs;
         if (individual.PermanentAddress is null) individual.PermanentAddress = defaults.PermanentAddress;
@@ -185,7 +185,7 @@ public sealed class InsertCommand : ICommand
 
         var individual = new Individual
         {
-            SourceCustomerId = Option(args, "--customer-id") ?? string.Empty,
+            CustomerId = Option(args, "--customer-id") ?? string.Empty,
             SearchKey = "IMO" + Guid.NewGuid().ToString("N").Replace("-", "")[..17],
             KycType = "N",
         };

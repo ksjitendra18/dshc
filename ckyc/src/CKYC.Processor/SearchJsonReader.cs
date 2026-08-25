@@ -21,7 +21,7 @@ internal static class SearchJsonReader
             var request = new SearchRequest
             {
                 ExternalRequestId = Get(values, "externalrequestid", "requestid", "id"),
-                SourceCustomerId = Get(values, "sourcecustomerid", "customerid", "custid"),
+                CustomerId = Get(values, "customerid", "custid", "sourcecustomerid"), // final alias is legacy input compatibility
                 ClientType = Get(values, "clienttype") ?? "I",
                 SearchOption = GetInt(values, "searchoption", "option"),
                 IdentityTypeAndNumber = Get(values, "identitytypeandnumber", "identitytypenumber", "identity"),

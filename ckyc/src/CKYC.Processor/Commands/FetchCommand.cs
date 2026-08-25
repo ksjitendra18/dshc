@@ -4,7 +4,7 @@ using CKYC.Core.Domain;
 namespace CKYC.Processor.Commands;
 
 /// <summary>
-/// Step 1 — fetch the daily source customer ids into the master table. This is the
+/// Step 1 — fetch the daily customer ids into the master table. This is the
 /// <b>CBS</b> (Core Banking System) fetch, the retryable example: with the CBS simulation
 /// enabled, a deterministic subset of customer ids fails to be fetched and is recorded as a
 /// retryable <c>Failed</c> master row (with the activity's exponential-backoff schedule),
@@ -103,7 +103,7 @@ public sealed class FetchCommand : ICommand
         await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
         {
             MasterRecordId = record.Id,
-            SourceCustomerId = customerId,
+            CustomerId = customerId,
             Stage = ActivityTypeCodes.CbsFetch,
             ActivityTypeId = activity?.Id,
             Status = (int)MasterRecordStatus.Failed,

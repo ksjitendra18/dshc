@@ -58,7 +58,7 @@ public sealed class FvuCommand : ICommand
             await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
             {
                 MasterRecordId = r.Id,
-                SourceCustomerId = r.SourceCustomerId,
+                CustomerId = r.CustomerId,
                 Stage = "FvuUpload",
                 ActivityTypeId = activity?.Id,
                 Status = (int)status,

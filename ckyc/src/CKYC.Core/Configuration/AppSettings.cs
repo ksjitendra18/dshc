@@ -38,7 +38,7 @@ public sealed class DatabaseSettings
     public int CommandTimeoutSeconds { get; set; } = 30;
 }
 
-/// <summary>Where the daily source customer ids come from (step 1).</summary>
+/// <summary>Where the daily customer ids come from (step 1).</summary>
 public sealed class SourceSettings
 {
     // "generate" seeds a deterministic daily set of customer ids for the demo.
@@ -100,7 +100,7 @@ public sealed class SimulationSettings
     // Every Nth record save is deliberately failed to exercise the retry path.
     public int SaveErrorEvery { get; set; } = 4;
 
-    // A specific source customer id that always fails to save (useful for a targeted test).
+    // A specific customer id that always fails to save (useful for a targeted test).
     public string? SaveErrorForCustomerId { get; set; }
 
     // When FVU simulation mode is used with a generated batch, the Nth batch fails validation.

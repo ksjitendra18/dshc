@@ -98,7 +98,7 @@ public sealed class RetryService
         await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
         {
             MasterRecordId = rec.Id,
-            SourceCustomerId = rec.SourceCustomerId,
+            CustomerId = rec.CustomerId,
             Stage = ActivityTypeCodes.CbsFetch,
             ActivityTypeId = activity.Id,
             Status = (int)MasterRecordStatus.Pending,
@@ -106,7 +106,7 @@ public sealed class RetryService
             Remarks = $"CBS fetch retry succeeded on attempt {rec.RetryCount + 1}",
             AttemptedAt = DateTime.UtcNow,
         }, ct);
-        Console.WriteLine($"[retry]   {rec.SourceCustomerId}: CBS fetch re-attempted and succeeded -> Pending");
+        Console.WriteLine($"[retry]   {rec.CustomerId}: CBS fetch re-attempted and succeeded -> Pending");
         return new RetryOutcome(true);
     }
 

@@ -13,7 +13,7 @@ changing the underlying numeric storage.
 
 | Value | Code | Enum / Name | Description | Terminal |
 |------:|:----:|-------------|-------------|:--------:|
-| 0 | PND | Pending | Newly fetched daily source customer; awaiting CRM enrichment. | no |
+| 0 | PND | Pending | Newly fetched daily customer; awaiting CRM enrichment. | no |
 | 1 | CRM | CrmFetched | CRM data fetched successfully for this customer; awaiting save to record tables. | no |
 | 2 | SAV | Saved | Individual details persisted to the record tables; awaiting batch generation. | no |
 | 3 | BAT | Batched | Record enqueued into the generated `.UPL` batch file; awaiting upload. | no |
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS ix_status_code   ON status_master(Code);
 
 ```sql
 INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
-SELECT 0,'PND','Pending','Newly fetched daily source customer; awaiting CRM enrichment.',0,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')
+SELECT 0,'PND','Pending','Newly fetched daily customer; awaiting CRM enrichment.',0,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')
 WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=0);
 INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
 SELECT 1,'CRM','CrmFetched','CRM data fetched successfully for this customer; awaiting save to record tables.',0,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')

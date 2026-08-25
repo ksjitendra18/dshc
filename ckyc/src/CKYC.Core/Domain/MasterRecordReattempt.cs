@@ -14,7 +14,7 @@ public sealed class MasterRecordReattempt
 {
     public long Id { get; set; }
     public long MasterRecordId { get; set; }
-    public string SourceCustomerId { get; set; } = string.Empty;
+    public string CustomerId { get; set; } = string.Empty;
 
     /// <summary>Free-text reason the record is being re-pushed (e.g. "PAN corrected in backend").</summary>
     public string? Reason { get; set; }

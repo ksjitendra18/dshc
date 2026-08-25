@@ -26,6 +26,7 @@ public sealed class CommandRegistry
             new ReattemptCommand(),
             new BuildZipCommand(),
             new BuildZipLegalCommand(),
+            new BatchFindCommand(),
             new FvuCommand(),
             new ResponseCommand(),
             new ReconcileCommand(),
@@ -34,6 +35,7 @@ public sealed class CommandRegistry
             new SearchProcessCommand(),
             new SearchFvuCommand(),
             new SearchResponseCommand(),
+            new DownloadResponseCommand(),
         });
 
     public string Help()
@@ -54,6 +56,7 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe retry");
         sb.AppendLine("  CKYCProcessor.exe reattempt --customer CUST202608240001 --reason \"PAN corrected\"");
         sb.AppendLine("  CKYCProcessor.exe build-zip");
+        sb.AppendLine("  CKYCProcessor.exe batch-find --customer CUST202608240001");
         sb.AppendLine("  CKYCProcessor.exe fvu");
         sb.AppendLine("  CKYCProcessor.exe response read");
         sb.AppendLine("  CKYCProcessor.exe reconcile --kind cersai --stakeholder \"Operations\"");
@@ -62,6 +65,7 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe search-process --limit 1000");
         sb.AppendLine("  CKYCProcessor.exe search-fvu");
         sb.AppendLine("  CKYCProcessor.exe search-response");
+        sb.AppendLine("  CKYCProcessor.exe download-response --path <DWN.RES.zip>");
         return sb.ToString();
     }
 }

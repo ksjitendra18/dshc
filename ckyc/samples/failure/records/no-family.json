@@ -1,5 +1,5 @@
 {
-  "sourceCustomerId": "TEST-FAIL-FAM-01",
+  "customerId": "TEST-FAIL-FAM-01",
   "searchKey": "IMO26082433347192328",
   "kycType": "N",
   "name": { "title": "Ms.", "firstName": "Divya", "middleName": "", "lastName": "Rao" },

@@ -5,7 +5,7 @@ public sealed class SearchRequest
 {
     public long Id { get; set; }
     public string? ExternalRequestId { get; set; }
-    public string? SourceCustomerId { get; set; }
+    public string? CustomerId { get; set; }
     public string ClientType { get; set; } = "I";
     public int SearchOption { get; set; }
     public string? IdentityTypeAndNumber { get; set; }

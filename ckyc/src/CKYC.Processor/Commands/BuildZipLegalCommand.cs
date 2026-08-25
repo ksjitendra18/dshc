@@ -24,10 +24,10 @@ public sealed class BuildZipLegalCommand : ICommand
             return 0;
         }
 
-        var customerIds = saved.Select(r => r.SourceCustomerId).ToList();
-        var entities = await ctx.LegalEntities.GetBySourceCustomerIdsAsync(customerIds, ct);
+        var customerIds = saved.Select(r => r.CustomerId).ToList();
+        var entities = await ctx.LegalEntities.GetByCustomerIdsAsync(customerIds, ct);
         var ordered = customerIds
-            .Select(id => entities.FirstOrDefault(e => e.SourceCustomerId == id))
+            .Select(id => entities.FirstOrDefault(e => e.CustomerId == id))
             .Where(e => e is not null)
             .Cast<Core.Domain.LegalEntity>()
             .ToList();
@@ -40,14 +40,14 @@ public sealed class BuildZipLegalCommand : ICommand
 
         var batch = await ctx.LegalEntityBatchGenerator.GenerateAsync(ordered, DateOnly.FromDateTime(DateTime.Today), ct);
 
-        var skippedIds = batch.Skipped is null ? new HashSet<string>() : new HashSet<string>(batch.Skipped.Select(s => s.SourceCustomerId));
-        var batchedRecords = saved.Where(r => !skippedIds.Contains(r.SourceCustomerId)).ToList();
+        var skippedIds = batch.Skipped is null ? new HashSet<string>() : new HashSet<string>(batch.Skipped.Select(s => s.CustomerId));
+        var batchedRecords = saved.Where(r => !skippedIds.Contains(r.CustomerId)).ToList();
         var batchedIds = batchedRecords.Select(r => r.Id).ToList();
 
         var lineByRecord = new Dictionary<long, int>();
         if (batch.Record20Lines is not null)
             foreach (var r in batchedRecords)
-                if (batch.Record20Lines.TryGetValue(r.SourceCustomerId, out var line))
+                if (batch.Record20Lines.TryGetValue(r.CustomerId, out var line))
                     lineByRecord[r.Id] = line;
 
         await ctx.Master.MarkBatchAsync(batchedIds, batch.UploadFileName, lineByRecord, ct);
@@ -58,7 +58,7 @@ public sealed class BuildZipLegalCommand : ICommand
             await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
             {
                 MasterRecordId = r.Id,
-                SourceCustomerId = r.SourceCustomerId,
+                CustomerId = r.CustomerId,
                 Stage = "BuildZip",
                 ActivityTypeId = buildActivity?.Id,
                 Status = (int)MasterRecordStatus.Batched,
@@ -66,11 +66,11 @@ public sealed class BuildZipLegalCommand : ICommand
                 Remarks = $"Batched legal entity into '{batch.UploadFileName}' at record-20 line {lineByRecord.GetValueOrDefault(r.Id)}",
             }, ct);
         foreach (var s in batch.Skipped ?? Array.Empty<SkippedRecord>())
-            foreach (var r in saved.Where(x => x.SourceCustomerId == s.SourceCustomerId))
+            foreach (var r in saved.Where(x => x.CustomerId == s.CustomerId))
                 await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
                 {
                     MasterRecordId = r.Id,
-                    SourceCustomerId = r.SourceCustomerId,
+                    CustomerId = r.CustomerId,
                     Stage = "BuildZip",
                     ActivityTypeId = buildActivity?.Id,
                     Status = (int)MasterRecordStatus.Saved,
@@ -87,7 +87,7 @@ public sealed class BuildZipLegalCommand : ICommand
             Console.WriteLine($"[build-zip-legal]   Skipped     : {batch.SkippedCount} record(s) failed validation:");
             foreach (var s in batch.Skipped!)
             {
-                Console.WriteLine($"    ! {s.SourceCustomerId} ({s.CustomerName})");
+                Console.WriteLine($"    ! {s.CustomerId} ({s.CustomerName})");
                 foreach (var e in s.Errors)
                     Console.WriteLine($"        - [{e.RecordType}/{e.FieldName}] {e.ErrorDescription}");
             }

@@ -27,7 +27,7 @@ public sealed class ReconcileCommand : ICommand
 
     private static readonly string[] Header =
     {
-        "MasterRecordId", "SourceCustomerId", "BusinessDate", "Status", "FailedStage",
+        "MasterRecordId", "CustomerId", "BusinessDate", "Status", "FailedStage",
         "RetryCount", "LastError", "LastAttemptAt", "NextRetryAt", "NeedsReconcile",
         "ReconStatus", "ReconRemarks", "CersaiStatus", "CersaiAckNumber",
         "CersaiRejectionRemark", "CersaiResponseReadAt", "ReattemptCount",
@@ -62,7 +62,7 @@ public sealed class ReconcileCommand : ICommand
         {
             lines.AppendLine(string.Join(",", new[]
             {
-                r.Id.ToString(), r.SourceCustomerId, r.BusinessDate.ToString("yyyy-MM-dd"),
+                r.Id.ToString(), r.CustomerId, r.BusinessDate.ToString("yyyy-MM-dd"),
                 r.Status.Label(), r.LastActivity ?? "", r.RetryCount.ToString(),
                 r.LastError ?? "", r.LastAttemptAt?.ToString("o") ?? "", r.NextRetryAt?.ToString("o") ?? "",
                 r.NeedsReconcile ? "Yes" : "No", r.ReconStatus ?? "", r.ReconRemarks ?? "",
@@ -81,7 +81,7 @@ public sealed class ReconcileCommand : ICommand
             var reason = r.NeedsReconcile
                 ? $"exhausted retries (last error: {r.LastError})"
                 : (r.Status == MasterRecordStatus.Rejected ? "rejected by CERSAI" : "failed at CERSAI");
-            Console.WriteLine($"  [{r.Id}] {r.SourceCustomerId}  {r.Status.Label()}  retry={r.RetryCount}  reattempt={r.ReattemptCount}  {reason}");
+            Console.WriteLine($"  [{r.Id}] {r.CustomerId}  {r.Status.Label()}  retry={r.RetryCount}  reattempt={r.ReattemptCount}  {reason}");
             if (r.LastResponseRejectionRemark is not null)
                 Console.WriteLine($"        CERSAI remark: {r.LastResponseRejectionRemark}");
         }

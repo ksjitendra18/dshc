@@ -49,6 +49,7 @@ public sealed class ResponseCommand : ICommand
         Console.WriteLine($"[response] Reading {files.Count} response file(s) for batch '{batch.BatchKey}' (upload: {batch.UploadFileName})...");
 
         var processedFiles = 0;
+        var alreadyImported = 0;
         var totalDetails = 0;
         var matched = 0;
         var unmatched = 0;
@@ -58,18 +59,26 @@ public sealed class ResponseCommand : ICommand
 
         foreach (var file in files)
         {
-            var name = Path.GetFileName(file);
-            var content = await File.ReadAllTextAsync(file, ct);
-            var parsed = CkycResponseParser.Parse(name, content);
-            processedFiles++;
-
-            var hdr = parsed.Header;
-            Console.WriteLine($"[response]   {name} (resp #{parsed.ResponseFileNumber})" +
-                              $" header: total={hdr?.TotalRecords} processed={hdr?.TotalProcessed} " +
-                              $"pending={hdr?.UnderProcessing} failed={hdr?.Failed} ts={hdr?.ResponseTimestamp}");
-
-            foreach (var detail in parsed.Details)
+            var imports = await UploadResponseReader.ReadAsync(file, ctx.Hasher, ct);
+            foreach (var import in imports)
             {
+                var name = Path.GetFileName(import.ResponseFileName);
+                var parsed = import.Parsed;
+                var hdr = parsed.Header;
+                if (await ctx.Master.HasUploadResponseFileAsync(import.SourceHash, name, ct))
+                {
+                    alreadyImported++;
+                    Console.WriteLine($"[response]   {name}: already imported");
+                    continue;
+                }
+                processedFiles++;
+
+                Console.WriteLine($"[response]   {name} (resp #{parsed.ResponseFileNumber})" +
+                                  $" header: total={hdr?.TotalRecords} processed={hdr?.TotalProcessed} " +
+                                  $"pending={hdr?.UnderProcessing} failed={hdr?.Failed} ts={hdr?.ResponseTimestamp}");
+
+                foreach (var detail in parsed.Details)
+                {
                 totalDetails++;
                 var master = await ResolveMasterAsync(ctx, batch, detail, ct);
                 if (master is null)
@@ -82,7 +91,7 @@ public sealed class ResponseCommand : ICommand
                 await ctx.Master.AddResponseAsync(new MasterRecordResponse
                 {
                     MasterRecordId = master.Id,
-                    SourceCustomerId = master.SourceCustomerId,
+                    CustomerId = master.CustomerId,
                     BatchFile = batch.UploadFileName,
                     ResponseFileNumber = parsed.ResponseFileNumber,
                     ResponseFileName = name,
@@ -100,13 +109,14 @@ public sealed class ResponseCommand : ICommand
                     RawData = BuildRaw(detail),
                 }, ct);
                 matched++;
+                var isCurrentBatch = string.Equals(master.BatchFile, batch.UploadFileName, StringComparison.OrdinalIgnoreCase);
 
                 // Audit trail: every response detail read is an attempt in the "Response" stage,
                 // so the history of response 0 / 1 / 2 is fully traceable.
                 await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
                 {
                     MasterRecordId = master.Id,
-                    SourceCustomerId = master.SourceCustomerId,
+                    CustomerId = master.CustomerId,
                     Stage = "Response",
                     ActivityTypeId = responseActivity?.Id,
                     Status = (int)MasterRecordStatus.ResponseRead,
@@ -117,12 +127,16 @@ public sealed class ResponseCommand : ICommand
 
                 // Simple reconciliation rule driven by the reply: a rejection remark means the
                 // record was rejected; a confirmed match (01) or no-match (02) mean reconciled.
-                if (IsRejected(detail.RecordStatus, detail.RejectionRemark))
+                if (!isCurrentBatch)
+                {
+                    Console.WriteLine($"[response]     {master.CustomerId} historical response stored; current batch is {master.BatchFile}");
+                }
+                else if (IsRejected(detail.RecordStatus, detail.RejectionRemark))
                 {
                     await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Rejected,
                         $"Rejected by CERSAI: {detail.RejectionRemark}", detail.RejectionRemark, ct);
                     rejected++;
-                    Console.WriteLine($"[response]     {master.SourceCustomerId} REJECTED: {detail.RejectionRemark}");
+                    Console.WriteLine($"[response]     {master.CustomerId} REJECTED: {detail.RejectionRemark}");
                 }
                 else if (detail.RecordStatus is "01" or "02")
                 {
@@ -130,26 +144,52 @@ public sealed class ResponseCommand : ICommand
                         $"Response read - status {detail.RecordStatus} (ack {detail.AckNumber})",
                         null, ct);
                     reconciled++;
-                    Console.WriteLine($"[response]     {master.SourceCustomerId} reconciled status={detail.RecordStatus} " +
+                    Console.WriteLine($"[response]     {master.CustomerId} reconciled status={detail.RecordStatus} " +
                                       $"ack={detail.AckNumber} ref={detail.CkycReferenceNumber} ckycNo={detail.CkycNumber}");
                 }
                 else
                 {
-                    Console.WriteLine($"[response]     {master.SourceCustomerId} recorded status={detail.RecordStatus} ack={detail.AckNumber}");
+                    Console.WriteLine($"[response]     {master.CustomerId} recorded status={detail.RecordStatus} ack={detail.AckNumber}");
                 }
+                }
+
+                await ctx.Master.TryAddUploadResponseFileAsync(new UploadResponseFile
+                {
+                    BatchFile = batch.UploadFileName,
+                    ResponseFileName = name,
+                    ResponseFileNumber = parsed.ResponseFileNumber,
+                    TotalRecords = hdr?.TotalRecords ?? 0,
+                    TotalProcessed = hdr?.TotalProcessed ?? 0,
+                    UnderProcessing = hdr?.UnderProcessing ?? 0,
+                    Failed = hdr?.Failed ?? 0,
+                    ResponseTimestamp = hdr?.ResponseTimestamp,
+                    RawHeaderData = import.Content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                        .FirstOrDefault(line => line.StartsWith("90|", StringComparison.Ordinal)),
+                    SourceArchiveName = import.SourceArchiveName,
+                    SourceHash = import.SourceHash,
+                }, ct);
             }
         }
 
-        Console.WriteLine($"[response] Done: files={processedFiles} details={totalDetails} " +
+        Console.WriteLine($"[response] Done: files={processedFiles} already-imported={alreadyImported} details={totalDetails} " +
                           $"matched={matched} unmatched={unmatched} reconciled={reconciled} rejected={rejected}");
-        return matched > 0 ? 0 : 1;
+        return alreadyImported > 0 || (processedFiles > 0 && unmatched == 0) ? 0 : 1;
     }
 
-    private static Task<GeneratedBatch?> ResolveBatchAsync(AppContext ctx, string[] args, CancellationToken ct)
+    private static async Task<GeneratedBatch?> ResolveBatchAsync(AppContext ctx, string[] args, CancellationToken ct)
     {
         var key = Option(args, "--batch");
-        // Default to the last generated batch, or the batch with the matching key.
-        return ctx.Journal.GetLastBatchAsync(ct);
+        if (!string.IsNullOrWhiteSpace(key)) return await ctx.Journal.GetBatchByKeyAsync(key, ct);
+
+        var file = Option(args, "--file");
+        if (!string.IsNullOrWhiteSpace(file))
+        {
+            var uploadFile = UploadResponseReader.InferUploadFileName(file);
+            if (!string.IsNullOrWhiteSpace(uploadFile))
+                return await ctx.Journal.GetBatchByUploadFileAsync(uploadFile, ct);
+        }
+
+        return await ctx.Journal.GetLastBatchAsync(ct);
     }
 
     private static Task<Core.Domain.MasterRecord?> ResolveMasterAsync(AppContext ctx, GeneratedBatch batch, ResponseDetail detail, CancellationToken ct)

@@ -9,7 +9,8 @@ public sealed class Individual
 {
     public long Id { get; set; }
     public long MasterRecordId { get; set; }
-    public string SourceCustomerId { get; set; } = string.Empty;
+    /// <summary>Organization-owned customer key; never emitted as a CERSAI field.</summary>
+    public string CustomerId { get; set; } = string.Empty;
 
     // ---- Record 20 : Demographics ----
     public string SearchKey { get; set; } = string.Empty;

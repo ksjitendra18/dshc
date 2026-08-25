@@ -1,7 +1,7 @@
 namespace CKYC.Core.Domain;
 
 /// <summary>
-/// Lifecycle status of a single source customer as it flows through the CKYC pipeline.
+/// Lifecycle status of a single customer as it flows through the CKYC pipeline.
 /// Persisted in the master table's Status column — this is the single "current stage"
 /// value that tells you where a record is right now (awaiting batch, uploaded & pending
 /// at CERSAI, response read, reconciled, etc.).

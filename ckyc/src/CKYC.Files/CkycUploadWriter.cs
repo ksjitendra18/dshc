@@ -67,7 +67,7 @@ public sealed class CkycUploadWriter
         var lineNo = 1;
         foreach (var r in records)
         {
-            map[r.SourceCustomerId] = lineNo;
+            map[r.CustomerId] = lineNo;
             lineNo += 1;                                                       // record-20
             lineNo += r.Proofs.Count;                                          // record-30
             if (r.PermanentAddress is not null || r.CurrentAddress is not null) lineNo += 1; // record-40

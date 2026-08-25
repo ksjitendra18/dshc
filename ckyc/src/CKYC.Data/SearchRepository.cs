@@ -24,7 +24,7 @@ public sealed class SearchRepository : ISearchRepository
             cmd.Transaction = (DbTransaction)tx;
             cmd.CommandText = """
                 INSERT INTO search_request
-                    (ExternalRequestId, SourceCustomerId, ClientType, SearchOption,
+                    (ExternalRequestId, CustomerId, ClientType, SearchOption,
                      IdentityTypeAndNumber, FirstName, MiddleName, LastName, DateOfBirth,
                      LegalEntityName, DateOfIncorporation, Gender, PhotoReferenceNumber,
                      Relation, RelationFirstName, RelationMiddleName, RelationLastName,
@@ -36,7 +36,7 @@ public sealed class SearchRepository : ISearchRepository
                      @rmiddle, @rlast, @mobile, @credential, @constitution, @raw, 0, @now, @now)
                 """;
             Add(cmd, "@external", request.ExternalRequestId);
-            Add(cmd, "@customer", request.SourceCustomerId);
+            Add(cmd, "@customer", request.CustomerId);
             Add(cmd, "@client", request.ClientType);
             Add(cmd, "@option", request.SearchOption);
             Add(cmd, "@identity", request.IdentityTypeAndNumber);
@@ -355,7 +355,7 @@ public sealed class SearchRepository : ISearchRepository
             result.Add(new SearchRequest
             {
                 Id = Convert.ToInt64(r["Id"]), ExternalRequestId = Text(r, "ExternalRequestId"),
-                SourceCustomerId = Text(r, "SourceCustomerId"), ClientType = Text(r, "ClientType") ?? "I",
+                CustomerId = Text(r, "CustomerId"), ClientType = Text(r, "ClientType") ?? "I",
                 SearchOption = Convert.ToInt32(r["SearchOption"]), IdentityTypeAndNumber = Text(r, "IdentityTypeAndNumber"),
                 FirstName = Text(r, "FirstName"), MiddleName = Text(r, "MiddleName"), LastName = Text(r, "LastName"),
                 DateOfBirth = Text(r, "DateOfBirth"), LegalEntityName = Text(r, "LegalEntityName"),

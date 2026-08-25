@@ -18,10 +18,10 @@ Top findings, in priority order:
 | # | Finding | Where | Impact at scale |
 |---|---------|-------|-----------------|
 | 1 | **~5–12 DB round-trips per record** in `store`/`response read`/`fvu`, each opening a fresh connection | `StoreService`, `ResponseCommand`, `FvuCommand`, `MasterRepository` | 10k records → 50k–120k round-trips |
-| 2 | **N+1 query pattern** loading record tables; record-40 read **twice** for the same row | `IndividualRepository.GetBySourceCustomerIdsAsync` | 6+ query/record → 6N+ queries |
+| 2 | **N+1 query pattern** loading record tables; record-40 read **twice** for the same row | `IndividualRepository.GetByCustomerIdsAsync` | 6+ query/record → 6N+ queries |
 | 3 | **Full-table materialization** to dedupe + per-row autocommit inserts | `MasterRepository.UpsertDailyAsync` | O(table) memory + N commits |
 | 4 | **No SQLite tuning**: default DELETE journal, `synchronous=FULL`, no `busy_timeout`, `Cache=Shared` instead of WAL | `SqliteDatabase`, `appsettings.json` | Insert/commit throughput 10–100× below what SQLite can do |
-| 5 | **Missing indexes on every `kyc_record_*` table** (`MasterRecordId`) and on `kyc_record_20(SourceCustomerId)` | `Ddl.cs` | Every save/load is a table scan as tables grow |
+| 5 | **Missing indexes on every `kyc_record_*` table** (`MasterRecordId`) and on `kyc_record_20(CustomerId)` | `Ddl.cs` | Every save/load is a table scan as tables grow |
 | 6 | **O(N²) `FirstOrDefault` inside a `Select`** | `BuildZipCommand.cs:24-28` | 50k records → 2.5G string comparisons |
 | 7 | Per-row `COUNT(*)`+INSERT attempt numbering on a **separate connection**, race-prone | `MasterRepository.NextAttemptNumberAsync` / `LogAttemptAsync` | 2 extra round-trips/attempt + integrity risk |
 | 8 | Per-record **`Console.WriteLine`** in loops | `StoreService`, `ResponseCommand` | Console I/O becomes a wall-clock bottleneck at 10k+ |
@@ -74,7 +74,7 @@ Every repository method calls `_db.Create()` → `new SqliteConnection(...)` + `
 - Per record: `UpdateStatusAsync` + `LogAttemptAsync` (2 conns) → ≈ 3 statements/2 conns each, sequential.
 
 ### 3.4 `build-zip` (step 4)
-- `GetBySourceCustomerIdsAsync` — the N+1 (see §4.2).
+- `GetByCustomerIdsAsync` — the N+1 (see §4.2).
 - O(N²) ordering (`BuildZipCommand.cs:24-28`) — see §5.1.
 - `MarkBatchAsync` — one `UPDATE ... WHERE Id IN (...)` then **one UPDATE per record** for `BatchRecordLine` (`MasterRepository.cs:182-193`); N statements in the transaction.
 - `LogAttemptAsync` per batched record (2 conns each) and per skipped record again (`BuildZipCommand.cs:57-79`).
@@ -88,7 +88,7 @@ Every repository method calls `_db.Create()` → `new SqliteConnection(...)` + `
 
 ### 4.1 `MasterRepository.UpsertDailyAsync` — the full-table dedup
 ```csharp
-SELECT SourceCustomerId FROM master_record        // entire column materialized
+SELECT CustomerId FROM master_record        // entire column materialized
 ... HashSet … then one INSERT per id, no transaction
 ```
 - Memory: O(table size) for the `HashSet` on every fetch run.
@@ -96,7 +96,7 @@ SELECT SourceCustomerId FROM master_record        // entire column materialized
 - Dedup correctness depends on this in-memory snapshot; a `UNIQUE` index would make dedup atomic and the query unnecessary — but the schema philosophy explicitly forbids UNIQUE constraints (`Ddl.cs` header, README §"Data model"). The middle ground that preserves the philosophy: wrap in one transaction and use a **single parameterized INSERT outside the loop** (reuse prepared command), or a multi-row INSERT; or accept the constraint tradeoff in production (SQL Server path would use `MERGE`/`WHERE NOT EXISTS`).
 - `EnsureAsync` also does SELECT → INSERT → SELECT (3 round-trips, 2 connections); `INSERT OR IGNORE` + `SELECT last_insert_rowid()` cuts it to 1–2.
 
-### 4.2 `IndividualRepository.GetBySourceCustomerIdsAsync` — N+1 (plus a duplicate read)
+### 4.2 `IndividualRepository.GetByCustomerIdsAsync` — N+1 (plus a duplicate read)
 - 1 query for `kyc_record_20 ... IN (...)`.
 - Then per individual (loop at lines 75–83): `LoadRecord30Async`, `LoadPermanentAddressAsync`, `LoadCurrentAddressAsync`, `LoadRecord50Async`, `LoadRecord60Async`, `LoadRecord70Async` — **6 queries per record**.
 - `LoadPermanentAddressAsync` and `LoadCurrentAddressAsync` run **the identical statement** (`SELECT * FROM kyc_record_40 WHERE MasterRecordId=@m`) — the same row is fetched twice; both address blocks live in one row (`Perm*` + `Curr*` columns).
@@ -118,7 +118,7 @@ INSERT INTO master_record_attempt ...
 - `SELECT *` returns ~40 columns on `master_record`; every `MasterRecord` materializes all of them even when the caller needs 3. Wide rows + TEXT storage → larger data pages. Prefer explicit column lists where the query shape is fixed (most are).
 - Heavy `r["col"]` indexer-by-name access (name → ordinal lookup + boxing per cell). Cached `GetOrdinal(...)` integers would remove the per-cell lookup; relevant mainly in the response loop (10k+ rows × ~16 string cells).
 - `ReadDate`/`ReadNullableDate` use `DateTime.TryParse` (culture-sensitive, slow-ish, and CA1305 was explicitly relaxed in `.editorconfig`). For round-trip ISO-8601 storage use `DateTime.Parse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)` or `ParseExact` — faster and unambiguous.
-- `GetByCustomerIdsAsync`/`GetBySourceCustomerIdsAsync` build dynamic `IN (@v0..@vN)` — fine for small sets; **chunk at ~500** params to avoid SQLite's variable limit (`SQLITE_MAX_VARIABLE_NUMBER`) on large batches.
+- `GetByCustomerIdsAsync`/`GetByCustomerIdsAsync` build dynamic `IN (@v0..@vN)` — fine for small sets; **chunk at ~500** params to avoid SQLite's variable limit (`SQLITE_MAX_VARIABLE_NUMBER`) on large batches.
 
 ### 4.5 Lookup tables re-queried in loops
 `GetActivityTypeByCodeAsync` is called **per failure record** in `StoreService.FailAsync`, once in `FvuCommand`, once in `ResponseCommand`, once in `BuildZipCommand`. `activity_type` has 7 rows. Load it once into `AppContext` (a `FrozenDictionary<string, ActivityType>` from .NET 8+) and pass it around — removes 1 round-trip per failed record.
@@ -128,10 +128,10 @@ INSERT INTO master_record_attempt ...
 ## 5. Schema & SQLite configuration (`Ddl.cs`, `SqliteDatabase.cs`)
 
 ### 5.1 Missing indexes
-Current indexes: `master_record(SourceCustomerId)`, `master_record(Status)`, `master_record_response(MasterRecordId)`, `master_record_attempt(MasterRecordId)`, `master_record_reattempt(MasterRecordId)`, `activity_type(Code)`, `status_master(StatusValue|Code)`, `master_record(BatchFile, BatchRecordLine)`.
+Current indexes: `master_record(CustomerId)`, `master_record(Status)`, `master_record_response(MasterRecordId)`, `master_record_attempt(MasterRecordId)`, `master_record_reattempt(MasterRecordId)`, `activity_type(Code)`, `status_master(StatusValue|Code)`, `master_record(BatchFile, BatchRecordLine)`.
 
 Missing (query shapes that currently scan):
-- **`kyc_record_20(SourceCustomerId)`** — used by `GetBySourceCustomerIdsAsync` `IN (...)`.
+- **`kyc_record_20(CustomerId)`** — used by `GetByCustomerIdsAsync` `IN (...)`.
 - **`kyc_record_20/30/40/50/60/70(MasterRecordId)`** — every load (`Load*Async`) and delete (`DeleteExistingAsync`) filters on `MasterRecordId`. These are the hot child-table lookups.
 - **`kyc_record_20(MasterRecordId)`** — the delete-first step of every save.
 - **`batch(BatchKey)`**, **`fvu_run(BatchKey)`** — keyed lookups (`--batch <key>` resolution).
@@ -165,10 +165,10 @@ Additional data-layer notes:
 1. **`BuildZipCommand.cs:24-28` — O(N²):**
    ```csharp
    var orderedIndividuals = customerIds
-       .Select(id => individuals.FirstOrDefault(i => i.SourceCustomerId == id))  // scan per id
+       .Select(id => individuals.FirstOrDefault(i => i.CustomerId == id))  // scan per id
        ...
    ```
-   For N saved records this is N × N comparisons. Build a `Dictionary<string, Individual>` (ordinal) once and index into it. Note `GetBySourceCustomerIdsAsync` already built a `masterIdByCustomer` map in a similar shape — reuse the pattern.
+   For N saved records this is N × N comparisons. Build a `Dictionary<string, Individual>` (ordinal) once and index into it. Note `GetByCustomerIdsAsync` already built a `masterIdByCustomer` map in a similar shape — reuse the pattern.
 2. **`CkycResponseParser.Parse` — whole-file line split:** `content.Split('\n', '\r')` allocates the full line array + every line copy up front. `File.ReadLines`/`ReadLinesAsync` + per-line `Split('|')` streams the file and caps memory at one line. Same for `InjectSimulatedHashes` (`FvuRunner.cs:76`, `File.ReadAllLines`).
 3. **`DummyCrmDataProvider.GetCustomer` — SHA-256 per derived field:** `StableDigits`/`StableIndex` run **9 SHA-256 hashes per customer** (mobile, searchKey, PAN, Aadhaar, related-party CKYC no., employee CKYC id…). At demo scale trivial; at 10k customers that's 90k hashes. Options: compute the hash bytes once per `customerId` and derive all digits from them, or cache in a `Dictionary<string, ...>` (stable by construction). Replacing SHA-256 with xxHash is only safe if stability across processes doesn't matter (it does here — deterministic CRM).
 4. **`CkycUploadWriter`:** per-record `string?[56]`/`string?[46]` arrays + `string.Join` are fine; the whole-batch `StringBuilder` could take a pre-sized capacity (`records.Count * ~800`) to avoid reallocations on 10k-record batches. `ZipFile.CreateFromDirectory(..., CompressionLevel.Optimal, ...)` on thousands of placeholder docs — `Fastest` (or `NoCompression` for the placeholders) cuts CPU meaningfully; the docs are `%PDF` placeholders.
@@ -256,12 +256,12 @@ Priority = impact / effort. **P0** fixes the round-trip and scan explosion; **P1
 ### P0 — do these first
 1. **SQLite pragmas + WAL** — `SqliteDatabase`: set `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size`, `mmap_size` at connection open (config-driven). *(Effort: tiny; impact: highest — the default `synchronous=FULL` + DELETE journal is the largest single multiplier on every write.)*
 2. **Command-scoped transactions + statement reuse** — one connection + one transaction per CLI stage (`store`, `response read`, `build-zip`, `fetch`), prepare statements once, reuse the transaction for all inserts/updates, commit at the end. *(Effort: medium — touches repository signatures to accept an ambient transaction/connection; impact: 10–50× on write stages.)*
-3. **Kill the N+1 and duplicate read in `GetBySourceCustomerIdsAsync`** — 5 batch queries (one per child table) + in-memory grouping; delete the double record-40 read. *(Effort: medium; impact: 6N → 5 queries.)*
+3. **Kill the N+1 and duplicate read in `GetByCustomerIdsAsync`** — 5 batch queries (one per child table) + in-memory grouping; delete the double record-40 read. *(Effort: medium; impact: 6N → 5 queries.)*
 4. **Make `UpsertDailyAsync` single-transaction and prepared** — no in-memory full-table dedup; `WHERE NOT EXISTS`/`INSERT OR IGNORE` (decide consciously on the no-UNIQUE philosophy) and reuse one command with parameter resets. *(Effort: small.)*
 5. **`NextAttemptNumberAsync` → single INSERT with `SELECT COUNT(*)+1` (or derive from master.RetryCount)** + optional `(MasterRecordId, Stage, Attempt)` unique index; run inside the ambient transaction. *(Effort: small; also fixes the race.)*
 
 ### P1 — structural
-6. **Indexes** for `kyc_record_20(SourceCustomerId)`, all `kyc_record_*(MasterRecordId)`, `batch(BatchKey)`, `fvu_run(BatchKey)`, composite `master_record(Status, RetryCount, LastActivity, NextRetryAt)` and `(Status, Id)`. *(Effort: small; verify with `EXPLAIN QUERY PLAN`.)*
+6. **Indexes** for `kyc_record_20(CustomerId)`, all `kyc_record_*(MasterRecordId)`, `batch(BatchKey)`, `fvu_run(BatchKey)`, composite `master_record(Status, RetryCount, LastActivity, NextRetryAt)` and `(Status, Id)`. *(Effort: small; verify with `EXPLAIN QUERY PLAN`.)*
 7. **`BuildZipCommand` O(N²) → `Dictionary` lookup.**
 8. **`FvuCommand` → query by batch file directly** (use `GetByBatchFileAsync`) instead of loading the entire `Batched` population and filtering in memory.
 9. **Cache `activity_type` / `status_master` in-memory** as frozen lookups at startup instead of per-record DB lookups.

@@ -28,11 +28,11 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
 
             var now = DateTime.UtcNow.ToString("o");
             await InsertRecord20(conn, localTx, record, now, ct);
-            await InsertRecord30(conn, localTx, record.MasterRecordId, FirstProof(record), ct);
+            await InsertRecord30(conn, localTx, record.MasterRecordId, record.CustomerId, FirstProof(record), ct);
             await InsertRecord40(conn, localTx, record, ct);
             await InsertRecord50(conn, localTx, record, ct);
             foreach (var rp in record.RelatedParties)
-                await InsertRecord60(conn, localTx, record.MasterRecordId, rp, ct);
+                await InsertRecord60(conn, localTx, record.MasterRecordId, record.CustomerId, rp, ct);
             await InsertRecord70(conn, localTx, record, ct);
 
             await tx.CommitAsync(ct);
@@ -46,7 +46,7 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         }
     }
 
-    public async Task<IReadOnlyList<LegalEntity>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
+    public async Task<IReadOnlyList<LegalEntity>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
     {
         if (customerIds.Count == 0) return Array.Empty<LegalEntity>();
         var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
@@ -57,13 +57,13 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         {
             var i = 0;
             foreach (var id in customerIds) cmd.Parameters.Add(NewParam($"@v{i++}", id));
-            cmd.CommandText = $"SELECT * FROM legal_entity_record_20 WHERE SourceCustomerId IN ({placeholders})";
+            cmd.CommandText = $"SELECT * FROM legal_entity_record_20 WHERE CustomerId IN ({placeholders})";
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
             {
                 var le = ReadRecord20(r);
                 le.MasterRecordId = Convert.ToInt64(r["MasterRecordId"]);
-                le.SourceCustomerId = r["SourceCustomerId"] as string ?? string.Empty;
+                le.CustomerId = r["CustomerId"] as string ?? string.Empty;
                 le.Proofs = new List<LeProofOfIdentity>();
                 le.RelatedParties = new List<LeRelatedParty>();
                 result.Add(le);
@@ -201,7 +201,7 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO legal_entity_record_20
-                (MasterRecordId, SourceCustomerId, SearchKey, EntityName, EntityConstitution,
+                (MasterRecordId, CustomerId, SearchKey, EntityName, EntityConstitution,
                  ListedCompany, RegisteredFirm, RegisteredTrust, DateOfIncorporation, DateOfCommencement,
                  PlaceOfIncorporation, CountryOfIncorporation, TinIssuingCountry, Pan, Form97,
                  TinGstNumber, PanDocument, PanVerified, TinGstnDocument, CreatedAt, UpdatedAt)
@@ -211,7 +211,7 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
                  @poi, @coi, @tic, @pan, @f97,
                  @tin, @panDoc, @panV, @tinDoc, @now, @now)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.SourceCustomerId);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.CustomerId);
         Add(cmd, "@sk", r.SearchKey); Add(cmd, "@nm", r.EntityName); Add(cmd, "@con", r.EntityConstitution);
         Add(cmd, "@listed", r.ListedCompany); Add(cmd, "@firm", r.RegisteredFirm); Add(cmd, "@trust", r.RegisteredTrust);
         Add(cmd, "@doi", r.DateOfIncorporation); Add(cmd, "@doc", r.DateOfCommencement);
@@ -223,13 +223,13 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, LeProofOfIdentity? p, CancellationToken ct)
+    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, string customerId, LeProofOfIdentity? p, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO legal_entity_record_30
-                (MasterRecordId, Record20LineNumber, CertificateOfIncorporation, Cin, MemorandumAndArticles,
+                (MasterRecordId, CustomerId, Record20LineNumber, CertificateOfIncorporation, Cin, MemorandumAndArticles,
                  ResolutionBoardPoA, NamesSeniorManagement, CertificateOfCommencement, OthersCompany,
                  RegistrationCertificate, RegistrationNumber, LlpinCertificate, Llpin, PartnershipDeed,
                  NamesAllPartners, OthersPartnership, TrustRegistrationCertificate, TrustRegistrationNumber,
@@ -239,10 +239,10 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
                  SupportingDocumentsPoi, OtherTypeRegistrationNumber, OtherTypeRegistrationCertificate,
                  OtherTypePowerOfAttorney, ActivityProof1, ActivityProof2, OthersOtherType)
             VALUES
-                (@m, 1, @v1,@v2,@v3,@v4,@v5,@v6,@v7,@v8,@v9,@v10,@v11,@v12,@v13,@v14,@v15,@v16,@v17,@v18,@v19,@v20,
+                (@m, @customer, 1, @v1,@v2,@v3,@v4,@v5,@v6,@v7,@v8,@v9,@v10,@v11,@v12,@v13,@v14,@v15,@v16,@v17,@v18,@v19,@v20,
                  @v21,@v22,@v23,@v24,@v25,@v26,@v27,@v28,@v29,@v30,@v31,@v32,@v33)
             """;
-        Add(cmd, "@m", masterId);
+        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId);
         Add(cmd, "@v1", p?.CertificateOfIncorporation); Add(cmd, "@v2", p?.Cin); Add(cmd, "@v3", p?.MemorandumAndArticles);
         Add(cmd, "@v4", p?.ResolutionBoardPoA); Add(cmd, "@v5", p?.NamesSeniorManagement); Add(cmd, "@v6", p?.CertificateOfCommencement);
         Add(cmd, "@v7", p?.OthersCompany); Add(cmd, "@v8", p?.RegistrationCertificate); Add(cmd, "@v9", p?.RegistrationNumber);
@@ -265,17 +265,17 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO legal_entity_record_40
-                (MasterRecordId, Record20LineNumber, RegLine1, RegLine2, RegLine3, RegCity, RegState, RegDistrict,
+                (MasterRecordId, CustomerId, Record20LineNumber, RegLine1, RegLine2, RegLine3, RegCity, RegState, RegDistrict,
                  RegPinCode, RegPinOthers, RegDigipin, RegCountry, RegProofOfAddress, RegOtherDocumentName, RegDocument,
                  SameAsRegistered,
                  PrinLine1, PrinLine2, PrinLine3, PrinCity, PrinState, PrinDistrict, PrinPinCode, PrinPinOthers,
                  PrinDigipin, PrinCountry, PrinProofOfAddress, PrinOtherDocumentName, PrinDocument)
             VALUES
-                (@m, 1, @r1,@r2,@r3,@rci,@rst,@rdi,@rpin,@rpinO,@rdig,@rco,@rpoa,@rod,@rdoc,
+                (@m, @customer, 1, @r1,@r2,@r3,@rci,@rst,@rdi,@rpin,@rpinO,@rdig,@rco,@rpoa,@rod,@rdoc,
                  @same,
                  @p1,@p2,@p3,@pci,@pst,@pdi,@ppin,@ppinO,@pdig,@pco,@ppoa,@pod,@pdoc)
             """;
-        Add(cmd, "@m", r.MasterRecordId);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId);
         Add(cmd, "@r1", reg?.Line1); Add(cmd, "@r2", reg?.Line2); Add(cmd, "@r3", reg?.Line3);
         Add(cmd, "@rci", reg?.City); Add(cmd, "@rst", reg?.State); Add(cmd, "@rdi", reg?.District);
         Add(cmd, "@rpin", reg?.PinCode); Add(cmd, "@rpinO", reg?.PinCodeOthers); Add(cmd, "@rdig", reg?.Digipin);
@@ -296,26 +296,26 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO legal_entity_record_50 (MasterRecordId, Record20LineNumber, CountryCode1, MobileNumber1,
+            INSERT INTO legal_entity_record_50 (MasterRecordId, CustomerId, Record20LineNumber, CountryCode1, MobileNumber1,
                 CountryCode2, MobileNumber2, EmailId1, EmailId2, Telephone, Fax)
-            VALUES (@m, 1, @cc1, @m1, @cc2, @m2, @e1, @e2, @tel, @fax)
+            VALUES (@m, @customer, 1, @cc1, @m1, @cc2, @m2, @e1, @e2, @tel, @fax)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@cc1", c?.CountryCode1); Add(cmd, "@m1", c?.MobileNumber1);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@cc1", c?.CountryCode1); Add(cmd, "@m1", c?.MobileNumber1);
         Add(cmd, "@cc2", c?.CountryCode2); Add(cmd, "@m2", c?.MobileNumber2); Add(cmd, "@e1", c?.Email1);
         Add(cmd, "@e2", c?.Email2); Add(cmd, "@tel", c?.Telephone); Add(cmd, "@fax", c?.Fax);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, LeRelatedParty rp, CancellationToken ct)
+    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, string customerId, LeRelatedParty rp, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO legal_entity_record_60 (MasterRecordId, Record20LineNumber, Relation, CkycNumber,
+            INSERT INTO legal_entity_record_60 (MasterRecordId, CustomerId, Record20LineNumber, Relation, CkycNumber,
                 ControllingInterest, PercentageOwnership, OtherRelationName, Din)
-            VALUES (@m, 1, @rel, @ckyc, @ci, @pct, @orn, @din)
+            VALUES (@m, @customer, 1, @rel, @ckyc, @ci, @pct, @orn, @din)
             """;
-        Add(cmd, "@m", masterId); Add(cmd, "@rel", rp.Relation); Add(cmd, "@ckyc", rp.CkycNumber);
+        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@rel", rp.Relation); Add(cmd, "@ckyc", rp.CkycNumber);
         Add(cmd, "@ci", rp.ControllingInterest); Add(cmd, "@pct", rp.PercentageOwnership);
         Add(cmd, "@orn", rp.OtherRelationName); Add(cmd, "@din", rp.Din);
         await cmd.ExecuteNonQueryAsync(ct);
@@ -327,13 +327,13 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO legal_entity_record_70 (MasterRecordId, Record20LineNumber, Remarks, CertifiedCopies,
+            INSERT INTO legal_entity_record_70 (MasterRecordId, CustomerId, Record20LineNumber, Remarks, CertifiedCopies,
                 EquivalentEDoc, VerificationFromDigiLocker, AttestationDate, EmployeeName, EmployeeCode,
                 EmployeeDesignation, EmployeeBranch, EmployeeCkycId, InstitutionName, InstitutionCode,
                 DeclarationDocument, DeclarationFlag, ConsentDocument, Place, DeclarationDate)
-            VALUES (@m, 1, @rem, @cc, @eq, @digi, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cons, @pl, @dc)
+            VALUES (@m, @customer, 1, @rem, @cc, @eq, @digi, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cons, @pl, @dc)
             """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@cc", o?.CertifiedCopies);
+        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@cc", o?.CertifiedCopies);
         Add(cmd, "@eq", o?.EquivalentEDoc); Add(cmd, "@digi", o?.VerificationFromDigiLocker); Add(cmd, "@ad", o?.AttestationDate);
         Add(cmd, "@en", o?.EmployeeName); Add(cmd, "@ec", o?.EmployeeCode); Add(cmd, "@ed", o?.EmployeeDesignation);
         Add(cmd, "@eb", o?.EmployeeBranch); Add(cmd, "@eid", o?.EmployeeCkycId); Add(cmd, "@in", o?.InstitutionName);

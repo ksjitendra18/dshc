@@ -14,6 +14,12 @@ public interface ISearchRepository
     Task<SearchResponseImportResult> ImportResponseAsync(SearchResponseImport response, CancellationToken ct = default);
 }
 
+/// <summary>Stores immutable CKYCR download response snapshots and their artifacts.</summary>
+public interface IDownloadRepository
+{
+    Task<DownloadImportResult> ImportAsync(DownloadResponseImport response, CancellationToken ct = default);
+}
+
 public interface ISearchFileWriter
 {
     string Write(IReadOnlyList<SearchRequest> records, DateOnly businessDate);

@@ -5,7 +5,7 @@ using AppContext = CKYC.Processor.AppContext;
 // ---------------------------------------------------------------------------
 // CKYCProcessor.exe — centralized CKYC processing CLI.
 //
-//   fetch cust    : step 1  source customer ids -> master table (CBS fetch; retryable)
+//   fetch cust    : step 1  customer ids -> master table (CBS fetch; retryable)
 //   crm serve     : step 2  dummy CRM API
 //   store         : step 3  CRM -> record tables (with simulated error saving)
 //   retry         :        retry failed records (per retryable activity, exponential backoff)

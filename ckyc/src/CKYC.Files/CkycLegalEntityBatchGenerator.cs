@@ -80,7 +80,7 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
             }
             else
             {
-                skipped.Add(new SkippedRecord(r.SourceCustomerId, r.EntityName, errors));
+                skipped.Add(new SkippedRecord(r.CustomerId, r.EntityName, errors));
             }
         }
 

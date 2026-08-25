@@ -37,7 +37,7 @@ public sealed class DummyCrmDataProvider
 
         return new Individual
         {
-            SourceCustomerId = customerId,
+            CustomerId = customerId,
             SearchKey = searchKey,
             KycType = "N",
             Name = new PersonName { Title = name.Title, FirstName = name.First, MiddleName = name.Middle, LastName = name.Last },

@@ -1,5 +1,5 @@
 {
-  "sourceCustomerId": "TEST-FAIL-PAN-01",
+  "customerId": "TEST-FAIL-PAN-01",
   "searchKey": "IMO26082433347192328",
   "kycType": "N",
   "name": { "title": "Mr.", "firstName": "Vijay", "middleName": "", "lastName": "Malhotra" },

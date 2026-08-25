@@ -28,7 +28,7 @@ public sealed record GeneratedBatch(
 /// (CM) validation rules, together with the reasons it was rejected.
 /// </summary>
 public sealed record SkippedRecord(
-    string SourceCustomerId,
+    string CustomerId,
     string CustomerName,
     IReadOnlyList<ValidationError> Errors);
 

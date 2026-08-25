@@ -16,7 +16,7 @@ public sealed class MasterRecordAttempt
 {
     public long Id { get; set; }
     public long MasterRecordId { get; set; }
-    public string SourceCustomerId { get; set; } = string.Empty;
+    public string CustomerId { get; set; } = string.Empty;
 
     /// <summary>Stage name of this attempt (Fetch, Crm, Store, BuildZip, FvuUpload, Response, Recon).</summary>
     public string Stage { get; set; } = string.Empty;

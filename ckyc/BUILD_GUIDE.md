@@ -141,7 +141,7 @@ Every step is a separate invocation of the same exe:
 ```powershell
 $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 
-# 1. load the daily source customer ids into the master table
+# 1. load the daily customer ids into the master table
 & $exe fetch cust
 
 # 2. start the dummy CRM API (keep it running in a separate window / background job)
@@ -307,7 +307,7 @@ backoff of 24 hours doubling per failure, max 3 attempts).
 shows master-table counts by status and the last batch. To inspect the DB directly:
 
 ```powershell
-sqlite3 runtime\ckyc.db "SELECT Id,SourceCustomerId,Status,BatchFile,Remarks FROM master_record;"
+sqlite3 runtime\ckyc.db "SELECT Id,CustomerId,Status,BatchFile,Remarks FROM master_record;"
 sqlite3 runtime\ckyc.db "SELECT BatchKey,ExitCode,Passed,HashValue FROM fvu_run ORDER BY Id DESC LIMIT 1;"
 ```
 

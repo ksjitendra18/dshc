@@ -419,7 +419,7 @@ Now `& $exe build-zip` re-batches it (only that record is `Saved`), re-run
   `RJKS2026`). Always use `fetch --file samples\failure\ids.json` in this
   manual.
 - **`insert` guardrails.** `insert` refuses a record whose first name has no
-  letter and requires a source customer id — finer-grained rules are only
+  letter and requires a customer id — finer-grained rules are only
   enforced at `build-zip` (that is why the failing seeds above are inserted
   fine but `Skipped` later).
 - **FVU output location.** `response read` without `--file` scans

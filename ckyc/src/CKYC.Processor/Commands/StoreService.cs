@@ -57,7 +57,7 @@ public sealed class StoreService
                 await _ctx.Master.UpdateStatusAsync(record.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
                 await LogAttemptAsync(record, ActivityTypeCodes.Store, MasterRecordStatus.Saved, true, null, save.Summary, ct);
                 success++;
-                Console.WriteLine($"[store] [{record.SourceCustomerId}] saved: {save.Summary}");
+                Console.WriteLine($"[store] [{record.CustomerId}] saved: {save.Summary}");
             }
             catch (Exception ex)
             {
@@ -71,7 +71,7 @@ public sealed class StoreService
 
     private async Task<Core.Domain.Individual?> FetchAndAttachAsync(MasterRecord record, CancellationToken ct)
     {
-        var individual = await _ctx.Crm.GetCustomerAsync(record.SourceCustomerId, ct);
+        var individual = await _ctx.Crm.GetCustomerAsync(record.CustomerId, ct);
         if (individual is null)
         {
             await LogAttemptAsync(record, ActivityTypeCodes.Crm, MasterRecordStatus.Failed, false,
@@ -84,7 +84,7 @@ public sealed class StoreService
 
         individual.Id = 0;
         individual.MasterRecordId = record.Id;
-        individual.SourceCustomerId = record.SourceCustomerId;
+        individual.CustomerId = record.CustomerId;
         return individual;
     }
 
@@ -92,7 +92,7 @@ public sealed class StoreService
     {
         var sim = _ctx.Settings.Simulation;
         if (!sim.SaveErrorsEnabled) return false;
-        if (!string.IsNullOrEmpty(sim.SaveErrorForCustomerId) && record.SourceCustomerId == sim.SaveErrorForCustomerId) return true;
+        if (!string.IsNullOrEmpty(sim.SaveErrorForCustomerId) && record.CustomerId == sim.SaveErrorForCustomerId) return true;
         if (sim.SaveErrorEvery > 0 && (index + 1) % sim.SaveErrorEvery == 0) return true;
         return false;
     }
@@ -118,7 +118,7 @@ public sealed class StoreService
             $"retry {attempt}{(exhausted ? " (budget exhausted -> reconcile)" : "")}", ct,
             activity?.Id, nextRetryAt);
 
-        Console.WriteLine($"[store] [{record.SourceCustomerId}] FAILED (retry {attempt}) [{activityCode}]: {error}" +
+        Console.WriteLine($"[store] [{record.CustomerId}] FAILED (retry {attempt}) [{activityCode}]: {error}" +
                           (exhausted ? " -> flagged for reconciliation" : $" -> next retry {nextRetryAt:u}"));
     }
 
@@ -127,7 +127,7 @@ public sealed class StoreService
         => _ctx.Master.LogAttemptAsync(new MasterRecordAttempt
         {
             MasterRecordId = record.Id,
-            SourceCustomerId = record.SourceCustomerId,
+            CustomerId = record.CustomerId,
             Stage = stage,
             ActivityTypeId = activityTypeId,
             Status = (int)status,
