@@ -15,19 +15,33 @@ public sealed class DummyCrmLegalEntityProvider
     {
         var idx = StableIndex(customerId);
         var constit = constitution ?? (idx % 2 == 0 ? LeConstitution.PrivateLimitedCompany : LeConstitution.Trust);
-        var pan = $"AAAC{StableDigits(customerId + "P", 5)}{"A"[0]}";
+        var pan = $"AAACX{StableDigits(customerId + "P", 4)}A";
         var searchKey = $"LMO{StableDigits(customerId + "S", 17)}"; // must be exactly 20 chars (ERR_061)
 
         var proof = new LeProofOfIdentity();
-        if (constit is LeConstitution.PrivateLimitedCompany)
+        if (LeConstitution.IsCompany(constit))
         {
             proof.CertificateOfIncorporation = "CertificateOfIncorporation.pdf";
-            proof.Cin = $"U{StableDigits(customerId + "C", 20)}";
+            proof.Cin = $"U{StableDigits(customerId + "C1", 5)}MH{2000 + idx % 20}PLC{StableDigits(customerId + "C2", 6)}";
             proof.MemorandumAndArticles = "MemorandumAndArticles.pdf";
             proof.ResolutionBoardPoA = "ResolutionPoA.pdf";
             proof.NamesSeniorManagement = "NamesSeniorManagement.pdf";
+            if (constit is LeConstitution.PublicLimitedCompany)
+                proof.CertificateOfCommencement = "CertificateOfCommencement.pdf";
         }
-        else
+        else if (constit is LeConstitution.PartnershipFirm or LeConstitution.Llp)
+        {
+            proof.RegistrationCertificate = "PartnershipRegistration.pdf";
+            proof.RegistrationNumber = $"REG{StableDigits(customerId + "R", 8)}";
+            if (constit is LeConstitution.Llp)
+            {
+                proof.LlpinCertificate = "LLPINCertificate.pdf";
+                proof.Llpin = $"A{StableDigits(customerId + "L", 6)}";
+            }
+            proof.PartnershipDeed = "PartnershipDeed.pdf";
+            proof.NamesAllPartners = "NamesAllPartners.pdf";
+        }
+        else if (constit is LeConstitution.Trust)
         {
             proof.TrustRegistrationCertificate = "TrustRegistrationCertificate.pdf";
             proof.TrustRegistrationNumber = $"TR{StableDigits(customerId + "T", 6)}";
@@ -35,27 +49,40 @@ public sealed class DummyCrmLegalEntityProvider
             proof.NamesBeneficiariesTrustees = "NamesBeneficiariesTrustees.pdf";
             proof.TrustPowerOfAttorney = "TrustPowerOfAttorney.pdf";
         }
+        else if (constit is LeConstitution.UnincorporatedAssociation)
+        {
+            proof.UnincorporatedRegistrationCertificate = "AssociationRegistration.pdf";
+            proof.UnincorporatedRegistrationNumber = $"ASC{StableDigits(customerId + "U", 8)}";
+            proof.ResolutionManagingBody = "ManagingBodyResolution.pdf";
+            proof.UnincorporatedPowerOfAttorney = "AssociationPowerOfAttorney.pdf";
+        }
+        else
+        {
+            proof.SupportingDocumentsPoi = "SupportingPoI.pdf";
+            proof.OtherTypeRegistrationNumber = $"OTH{StableDigits(customerId + "O", 8)}";
+            proof.OtherTypeRegistrationCertificate = "RegistrationCertificate.pdf";
+            proof.OtherTypePowerOfAttorney = "PowerOfAttorney.pdf";
+            if (constit is LeConstitution.SoleProprietorship) proof.ActivityProof1 = "ActivityProof1.pdf";
+        }
 
         return new LegalEntity
         {
             CustomerId = customerId,
             SearchKey = searchKey,
-            EntityName = constit is LeConstitution.PrivateLimitedCompany
-                ? $"Meridian Software Pvt Ltd {idx % 100}"
-                : $"Sunrise Charitable Trust {idx % 100}",
+            EntityName = $"Meridian Legal Entity {idx % 100}",
             EntityConstitution = constit,
-            ListedCompany = constit is LeConstitution.PrivateLimitedCompany ? "N" : null,
-            RegisteredFirm = "N",
+            ListedCompany = constit is LeConstitution.PublicLimitedCompany ? "N" : null,
+            RegisteredFirm = constit is LeConstitution.PartnershipFirm ? "Y" : null,
             RegisteredTrust = constit is LeConstitution.Trust ? "Y" : "N",
             DateOfIncorporation = $"{(idx % 28 + 1):00}-{(idx % 12 + 1):00}-{2000 + idx % 20}",
-            DateOfCommencement = constit is LeConstitution.PrivateLimitedCompany ? $"{(idx % 28 + 1):00}-{(idx % 12 + 1):00}-{2000 + idx % 20}" : null,
-            PlaceOfIncorporation = constit is LeConstitution.PrivateLimitedCompany ? "Mumbai" : "Pune",
+            DateOfCommencement = constit is LeConstitution.PublicLimitedCompany ? $"{(idx % 28 + 1):00}-{(idx % 12 + 1):00}-{2000 + idx % 20}" : null,
+            PlaceOfIncorporation = "Mumbai",
             CountryOfIncorporation = "IN",
             TinIssuingCountry = "IN",
             Pan = pan,
             PanVerified = "Y",
             PanDocument = "Pan.pdf",
-            TinGstNumber = $"22{StableDigits(customerId + "G", 13)}",
+            TinGstNumber = $"22{pan}1Z5",
             TinGstnDocument = "TinGst.pdf",
             Proofs = new List<LeProofOfIdentity> { proof },
             RegisteredAddress = new LeAddressDetails
@@ -104,7 +131,7 @@ public sealed class DummyCrmLegalEntityProvider
             {
                 Remarks = "Fetched from CRM",
                 CertifiedCopies = "Y", EquivalentEDoc = "N", VerificationFromDigiLocker = "N",
-                AttestationDate = DateTime.Today.ToString("dd-MM-yyyy"),
+                AttestationDate = DateTime.Today.ToString("ddMMyyyy"),
                 EmployeeName = "Anusaya", EmployeeCode = "A236", EmployeeDesignation = "SM",
                 EmployeeBranch = "Kamlamills", EmployeeCkycId = StableDigits(customerId + "C", 14),
                 InstitutionName = "PhonePe_Limited", InstitutionCode = "IN0238",

@@ -5,6 +5,12 @@ namespace CKYC.Core.Spec;
 /// </summary>
 public static class CkycRecords
 {
+    public const int MaxIndividualBatchRecords = 500;
+    public const int MaxLegalEntityBatchRecords = 10;
+    public const long MaxIndividualBytesPerCustomer = 500L * 1024L;
+    public const long MaxLegalEntityBytesPerCustomer = 25L * 1024L * 1024L;
+    public const long MaxLegalSmallDocumentBytes = 500L * 1024L;
+
     public const string Header = "10";
     public const string Demographic = "20";
     public const string Proof = "30";

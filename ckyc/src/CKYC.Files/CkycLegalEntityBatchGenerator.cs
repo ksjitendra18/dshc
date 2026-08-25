@@ -29,16 +29,14 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
     {
         if (records.Count == 0)
             throw new InvalidOperationException("No legal-entity records supplied to the batch generator.");
+        if (records.Count > CkycRecords.MaxLegalEntityBatchRecords)
+            throw new InvalidOperationException($"A legal-entity batch cannot contain more than {CkycRecords.MaxLegalEntityBatchRecords} customers.");
 
         var (valid, skipped) = Partition(records);
         if (valid.Count == 0)
             throw new InvalidOperationException(
                 $"All {records.Count} legal-entity record(s) failed validation — no batch was produced. " +
-                $"Run `build-zip-legal` with valid records, or inspect the validation errors below.");
-
-        var writer = new CkycLegalEntityUploadWriter(_batch);
-        var content = writer.Write(valid, businessDate);
-        var record20Lines = CkycLegalEntityUploadWriter.ComputeRecord20Lines(valid);
+                FormatValidationFailures(skipped));
 
         var fileName = CkycFileName.Build("L", _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);
@@ -48,6 +46,15 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         var docDir = Path.Combine(uploadDir, "support_docs");
         Directory.CreateDirectory(uploadDir);
         Directory.CreateDirectory(docDir);
+
+        ApplyCustomerSizeLimits(valid, skipped, docDir);
+        if (valid.Count == 0)
+            throw new InvalidOperationException($"All {records.Count} legal-entity record(s) failed validation or document-size limits. " +
+                FormatValidationFailures(skipped));
+
+        var writer = new CkycLegalEntityUploadWriter(_batch);
+        var content = writer.Write(valid, businessDate);
+        var record20Lines = CkycLegalEntityUploadWriter.ComputeRecord20Lines(valid);
 
         var uploadPath = Path.Combine(uploadDir, fileName);
         File.WriteAllText(uploadPath, content, new UTF8Encoding(false));
@@ -61,7 +68,7 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
 
         var zipPath = Path.Combine(batchDir, $"{batchKey}.zip");
         if (File.Exists(zipPath)) File.Delete(zipPath);
-        ZipFile.CreateFromDirectory(uploadDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: true);
+        CreateArchive(uploadPath, docDir, valid.SelectMany(EnumerateDocs), zipPath);
 
         return Task.FromResult(new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines));
     }
@@ -91,7 +98,6 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Maybe(set, le.PanDocument);
-        Maybe(set, le.Form97);
         Maybe(set, le.TinGstnDocument);
         Maybe(set, le.RegisteredAddressDocument);
         Maybe(set, le.PrincipalAddressDocument);
@@ -130,8 +136,66 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         return set;
     }
 
+    private static string FormatValidationFailures(IEnumerable<SkippedRecord> skipped) =>
+        string.Join(" ", skipped.Select(s =>
+            $"{s.CustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
+
     private static void Maybe(HashSet<string> set, string? doc)
     {
         if (!string.IsNullOrWhiteSpace(doc)) set.Add(doc);
+    }
+
+    private static void ApplyCustomerSizeLimits(List<LegalEntity> valid, List<SkippedRecord> skipped, string docDir)
+    {
+        foreach (var record in valid.ToList())
+        {
+            var documents = EnumerateDocs(record);
+            var unsafeDocument = documents.FirstOrDefault(doc => !IsSafeDocumentName(doc));
+            if (unsafeDocument is not null)
+            {
+                valid.Remove(record);
+                skipped.Add(new SkippedRecord(record.CustomerId, record.EntityName,
+                    [new ValidationError(null, "DOC", null, "Supporting documents", unsafeDocument, null,
+                        "A supporting document must be a PDF, JPG or JPEG file name without a directory path.")]));
+                continue;
+            }
+            var total = documents.Sum(doc => ExistingOrPlaceholderLength(docDir, doc));
+            var oversizedSmallDocument = SmallDocuments(record)
+                .FirstOrDefault(doc => ExistingOrPlaceholderLength(docDir, doc) > CkycRecords.MaxLegalSmallDocumentBytes);
+            if (total <= CkycRecords.MaxLegalEntityBytesPerCustomer && oversizedSmallDocument is null) continue;
+
+            valid.Remove(record);
+            var message = oversizedSmallDocument is not null
+                ? $"Document '{oversizedSmallDocument}' exceeds the workbook's 500 KB limit."
+                : $"Supporting documents total {total} bytes; the per-customer legal-entity limit is {CkycRecords.MaxLegalEntityBytesPerCustomer} bytes (25 MB).";
+            skipped.Add(new SkippedRecord(record.CustomerId, record.EntityName,
+                [new ValidationError(null, "DOC", null, "Supporting documents", total.ToString(), null, message)]));
+        }
+    }
+
+    private static IEnumerable<string> SmallDocuments(LegalEntity record)
+    {
+        foreach (var value in new[] { record.PanDocument, record.TinGstnDocument,
+                     record.RegisteredAddressDocument, record.PrincipalAddressDocument })
+            if (!string.IsNullOrWhiteSpace(value)) yield return value;
+    }
+
+    private static long ExistingOrPlaceholderLength(string docDir, string document)
+    {
+        var path = Path.Combine(docDir, document);
+        return File.Exists(path) ? new FileInfo(path).Length : 4L;
+    }
+
+    private static bool IsSafeDocumentName(string document) =>
+        !Path.IsPathRooted(document)
+        && string.Equals(Path.GetFileName(document), document, StringComparison.Ordinal)
+        && new[] { ".pdf", ".jpg", ".jpeg" }.Contains(Path.GetExtension(document), StringComparer.OrdinalIgnoreCase);
+
+    private static void CreateArchive(string uploadPath, string docDir, IEnumerable<string> documents, string zipPath)
+    {
+        using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+        archive.CreateEntryFromFile(uploadPath, $"upload/{Path.GetFileName(uploadPath)}", CompressionLevel.Optimal);
+        foreach (var document in documents.Distinct(StringComparer.OrdinalIgnoreCase))
+            archive.CreateEntryFromFile(Path.Combine(docDir, document), $"upload/support_docs/{document}", CompressionLevel.Optimal);
     }
 }

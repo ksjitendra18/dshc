@@ -32,6 +32,8 @@ public sealed class CkycBatchGenerator : IBatchGenerator
     {
         if (records.Count == 0)
             throw new InvalidOperationException("No records supplied to the batch generator.");
+        if (records.Count > CkycRecords.MaxIndividualBatchRecords)
+            throw new InvalidOperationException($"An individual batch cannot contain more than {CkycRecords.MaxIndividualBatchRecords} customers.");
 
         // Validate every record first (the CM rules). Invalid records are skipped & reported.
         var (valid, skipped) = Partition(records);
@@ -39,12 +41,6 @@ public sealed class CkycBatchGenerator : IBatchGenerator
             throw new InvalidOperationException(
                 $"All {records.Count} record(s) failed validation — no batch was produced. " +
                 $"{FormatValidationFailures(skipped)}");
-
-        var writer = new CkycUploadWriter(_batch);
-        var content = writer.Write(valid, businessDate);
-        // Which record-20 "line number" each customer landed on in this file, so the CERSAI
-        // reply can be attributed back to the correct master record.
-        var record20Lines = CkycUploadWriter.ComputeRecord20Lines(valid);
 
         var fileName = CkycFileName.Build(_batch.ClientType, _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);
@@ -54,6 +50,15 @@ public sealed class CkycBatchGenerator : IBatchGenerator
         var docDir = Path.Combine(uploadDir, "support_docs");
         Directory.CreateDirectory(uploadDir);
         Directory.CreateDirectory(docDir);
+
+        ApplyCustomerSizeLimit(valid, skipped, docDir);
+        if (valid.Count == 0)
+            throw new InvalidOperationException($"All {records.Count} record(s) failed validation or document checks. " +
+                FormatValidationFailures(skipped));
+
+        var writer = new CkycUploadWriter(_batch);
+        var content = writer.Write(valid, businessDate);
+        var record20Lines = CkycUploadWriter.ComputeRecord20Lines(valid);
 
         var uploadPath = Path.Combine(uploadDir, fileName);
         File.WriteAllText(uploadPath, content, new UTF8Encoding(false));
@@ -69,7 +74,7 @@ public sealed class CkycBatchGenerator : IBatchGenerator
 
         var zipPath = Path.Combine(batchDir, $"{batchKey}.zip");
         if (File.Exists(zipPath)) File.Delete(zipPath);
-        ZipFile.CreateFromDirectory(uploadDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: true);
+        CreateArchive(uploadPath, docDir, valid.SelectMany(EnumerateDocs), zipPath);
 
         return Task.FromResult(new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines));
     }
@@ -119,5 +124,47 @@ public sealed class CkycBatchGenerator : IBatchGenerator
     private static void Maybe(HashSet<string> set, string? doc)
     {
         if (!string.IsNullOrWhiteSpace(doc)) set.Add(doc);
+    }
+
+    private static void ApplyCustomerSizeLimit(List<Individual> valid, List<SkippedRecord> skipped, string docDir)
+    {
+        foreach (var record in valid.ToList())
+        {
+            var documents = EnumerateDocs(record);
+            var unsafeDocument = documents.FirstOrDefault(doc => !IsSafeDocumentName(doc));
+            if (unsafeDocument is not null)
+            {
+                valid.Remove(record);
+                skipped.Add(new SkippedRecord(record.CustomerId, $"{record.Name.FirstName} {record.Name.LastName}".Trim(),
+                    [new ValidationError(null, "DOC", null, "Supporting documents", unsafeDocument, null,
+                        "A supporting document must be a PDF, JPG or JPEG file name without a directory path.")]));
+                continue;
+            }
+            var bytes = documents.Sum(doc => ExistingOrPlaceholderLength(docDir, doc));
+            if (bytes <= CkycRecords.MaxIndividualBytesPerCustomer) continue;
+            valid.Remove(record);
+            skipped.Add(new SkippedRecord(record.CustomerId, $"{record.Name.FirstName} {record.Name.LastName}".Trim(),
+                [new ValidationError(null, "DOC", null, "Supporting documents", bytes.ToString(), null,
+                    $"Supporting documents total {bytes} bytes; the per-customer limit is {CkycRecords.MaxIndividualBytesPerCustomer} bytes (500 KB).") ]));
+        }
+    }
+
+    private static long ExistingOrPlaceholderLength(string docDir, string document)
+    {
+        var path = Path.Combine(docDir, document);
+        return File.Exists(path) ? new FileInfo(path).Length : 4L;
+    }
+
+    private static bool IsSafeDocumentName(string document) =>
+        !Path.IsPathRooted(document)
+        && string.Equals(Path.GetFileName(document), document, StringComparison.Ordinal)
+        && new[] { ".pdf", ".jpg", ".jpeg" }.Contains(Path.GetExtension(document), StringComparer.OrdinalIgnoreCase);
+
+    private static void CreateArchive(string uploadPath, string docDir, IEnumerable<string> documents, string zipPath)
+    {
+        using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+        archive.CreateEntryFromFile(uploadPath, $"upload/{Path.GetFileName(uploadPath)}", CompressionLevel.Optimal);
+        foreach (var document in documents.Distinct(StringComparer.OrdinalIgnoreCase))
+            archive.CreateEntryFromFile(Path.Combine(docDir, document), $"upload/support_docs/{document}", CompressionLevel.Optimal);
     }
 }

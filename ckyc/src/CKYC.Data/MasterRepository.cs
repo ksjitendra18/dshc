@@ -764,6 +764,7 @@ public sealed class MasterRepository : IMasterRepository
             {
                 Id = r.GetInt64(r.GetOrdinal("Id")),
                 CustomerId = r["CustomerId"] as string ?? string.Empty,
+                ClientType = r["ClientType"] as string ?? "I",
                 BusinessDate = ReadDate(r, "BusinessDate"),
                 Status = (MasterRecordStatus)Convert.ToInt32(r["Status"]),
                 Remarks = r["Remarks"] as string,

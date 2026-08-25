@@ -3,6 +3,7 @@ using System.Data.Common;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using CKYC.Core.Spec;
 using static CKYC.Data.MasterRepository;
 
 namespace CKYC.Data;
@@ -18,6 +19,11 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         if (record.MasterRecordId <= 0)
             return new SaveRecordResult(record.MasterRecordId, false, "MasterRecordId is required", null);
 
+        var validationErrors = LegalEntityRecordValidator.Validate(record);
+        if (validationErrors.Count > 0)
+            return new SaveRecordResult(record.MasterRecordId, false,
+                string.Join("; ", validationErrors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}")), null);
+
         await using var conn = _db.Create();
         await using var tx = await conn.BeginTransactionAsync(ct);
         var localTx = (DbTransaction)tx;
@@ -32,7 +38,7 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
             await InsertRecord40(conn, localTx, record, ct);
             await InsertRecord50(conn, localTx, record, ct);
             foreach (var rp in record.RelatedParties)
-                await InsertRecord60(conn, localTx, record.MasterRecordId, record.CustomerId, rp, ct);
+                await InsertRecord60(conn, localTx, record, rp, ct);
             await InsertRecord70(conn, localTx, record, ct);
 
             await tx.CommitAsync(ct);
@@ -306,16 +312,19 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, string customerId, LeRelatedParty rp, CancellationToken ct)
+    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, LegalEntity record, LeRelatedParty rp, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            INSERT INTO legal_entity_record_60 (MasterRecordId, CustomerId, Record20LineNumber, Relation, CkycNumber,
+            INSERT INTO legal_entity_record_60 (MasterRecordId, CustomerId, Record20LineNumber, NumberOfRelatedPersons,
+                NumberOfBeneficialOwners, Relation, CkycNumber,
                 ControllingInterest, PercentageOwnership, OtherRelationName, Din)
-            VALUES (@m, @customer, 1, @rel, @ckyc, @ci, @pct, @orn, @din)
+            VALUES (@m, @customer, 1, @relatedCount, @ownerCount, @rel, @ckyc, @ci, @pct, @orn, @din)
             """;
-        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@rel", rp.Relation); Add(cmd, "@ckyc", rp.CkycNumber);
+        Add(cmd, "@m", record.MasterRecordId); Add(cmd, "@customer", record.CustomerId); Add(cmd, "@rel", rp.Relation); Add(cmd, "@ckyc", rp.CkycNumber);
+        Add(cmd, "@relatedCount", record.RelatedParties.Count);
+        Add(cmd, "@ownerCount", record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)));
         Add(cmd, "@ci", rp.ControllingInterest); Add(cmd, "@pct", rp.PercentageOwnership);
         Add(cmd, "@orn", rp.OtherRelationName); Add(cmd, "@din", rp.Din);
         await cmd.ExecuteNonQueryAsync(ct);

@@ -11,8 +11,9 @@ public sealed class BuildZipCommand : ICommand
 
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
-        var limit = OptionInt(args, "--limit") ?? 1000;
-        var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, ct: ct);
+        var requestedLimit = OptionInt(args, "--limit") ?? CKYC.Core.Spec.CkycRecords.MaxIndividualBatchRecords;
+        var limit = Math.Clamp(requestedLimit, 1, CKYC.Core.Spec.CkycRecords.MaxIndividualBatchRecords);
+        var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, "I", ct);
         if (saved.Count == 0)
         {
             Console.WriteLine("[build-zip] No Saved records to batch. Run `store` first.");

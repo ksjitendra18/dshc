@@ -5,5 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CKYC.Core\CKYC.Core.csproj" />
     <ProjectReference Include="..\..\src\CKYC.Files\CKYC.Files.csproj" />
+    <ProjectReference Include="..\..\src\CKYC.Crm\CKYC.Crm.csproj" />
+    <ProjectReference Include="..\..\src\CKYC.Data\CKYC.Data.csproj" />
   </ItemGroup>
 </Project>

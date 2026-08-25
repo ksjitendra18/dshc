@@ -28,7 +28,7 @@ public sealed class LegalEntity
     public string? CountryOfIncorporation { get; set; } = "IN";
     public string? TinIssuingCountry { get; set; }
     public string? Pan { get; set; }                                      // 10-char PAN
-    public string? Form97 { get; set; }                                   // file name when PAN absent
+    public string? Form97 { get; set; }                                   // Y/null when PAN is absent
     public string? TinGstNumber { get; set; }                             // 15-char TIN/GST
     public string? PanDocument { get; set; }                              // support doc file name
     public string? PanVerified { get; set; }                              // Y/N

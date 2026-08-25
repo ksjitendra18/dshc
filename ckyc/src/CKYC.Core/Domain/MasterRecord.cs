@@ -17,6 +17,8 @@ public sealed class MasterRecord
     public long Id { get; set; }
     /// <summary>Organization-owned customer key used to correlate internal records.</summary>
     public string CustomerId { get; set; } = string.Empty;
+    /// <summary>I for an individual/retail customer, L for a legal entity.</summary>
+    public string ClientType { get; set; } = "I";
     public DateTime BusinessDate { get; set; }
     public MasterRecordStatus Status { get; set; } = MasterRecordStatus.Pending;
     public string? Remarks { get; set; }

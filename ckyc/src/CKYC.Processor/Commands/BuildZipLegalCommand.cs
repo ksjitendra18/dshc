@@ -16,7 +16,8 @@ public sealed class BuildZipLegalCommand : ICommand
 
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
-        var limit = OptionInt(args, "--limit") ?? 1000;
+        var requestedLimit = OptionInt(args, "--limit") ?? CKYC.Core.Spec.CkycRecords.MaxLegalEntityBatchRecords;
+        var limit = Math.Clamp(requestedLimit, 1, CKYC.Core.Spec.CkycRecords.MaxLegalEntityBatchRecords);
         var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, "L", ct);
         if (saved.Count == 0)
         {
@@ -98,7 +99,7 @@ public sealed class BuildZipLegalCommand : ICommand
         }
 
         Console.WriteLine("[build-zip-legal] Run `fvu` to submit this batch to the File Validation Utility.");
-        return 0;
+        return batch.SkippedCount > 0 ? 1 : 0;
     }
 
     private static int? OptionInt(string[] args, string name)

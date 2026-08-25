@@ -45,7 +45,7 @@ public sealed class CkycLegalEntityUploadWriter
                 sb.AppendLine(BuildRecord50(record.Contact, r20Line, lineNo++));
 
             foreach (var rp in record.RelatedParties)
-                sb.AppendLine(BuildRecord60(rp, r20Line, lineNo++));
+                sb.AppendLine(BuildRecord60(record, rp, r20Line, lineNo++));
 
             if (record.Other is not null)
                 sb.AppendLine(BuildRecord70(record, r20Line, lineNo++, businessDate));
@@ -227,18 +227,20 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord60(LeRelatedParty rp, int r20Line, int lineNo)
+    private static string BuildRecord60(LegalEntity record, LeRelatedParty rp, int r20Line, int lineNo)
     {
-        var f = new string?[9];
+        var f = new string?[11];
         f[0] = CkycRecords.RelatedParty;              // 60
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
-        f[3] = rp.Relation;
-        f[4] = Coalesce(rp.CkycNumber, "");
-        f[5] = Coalesce(rp.ControllingInterest, "");
-        f[6] = Coalesce(rp.PercentageOwnership, "");
-        f[7] = Coalesce(rp.OtherRelationName, "");
-        f[8] = Coalesce(rp.Din, "");
+        f[3] = record.RelatedParties.Count.ToString();
+        f[4] = record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)).ToString();
+        f[5] = rp.Relation;
+        f[6] = Coalesce(rp.CkycNumber, "");
+        f[7] = Coalesce(rp.ControllingInterest, "");
+        f[8] = Coalesce(rp.PercentageOwnership, "");
+        f[9] = Coalesce(rp.OtherRelationName, "");
+        f[10] = Coalesce(rp.Din, "");
         return string.Join('|', f);
     }
 
@@ -253,7 +255,7 @@ public sealed class CkycLegalEntityUploadWriter
         f[4] = Coalesce(o.CertifiedCopies, "Y");
         f[5] = Coalesce(o.EquivalentEDoc, "N");
         f[6] = Coalesce(o.VerificationFromDigiLocker, "N");
-        f[7] = Coalesce(o.AttestationDate, businessDate.ToString("dd-MM-yyyy"));
+        f[7] = Coalesce(o.AttestationDate, businessDate.ToString("ddMMyyyy"));
         f[8] = Coalesce(o.EmployeeName, "");
         f[9] = Coalesce(o.EmployeeCode, "");
         f[10] = Coalesce(o.EmployeeDesignation, "");

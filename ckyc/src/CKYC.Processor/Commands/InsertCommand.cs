@@ -41,6 +41,11 @@ public sealed class InsertCommand : ICommand
         // Get-or-create the master row, then save the record tables.
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
         var master = await ctx.Master.EnsureAsync(individual.CustomerId, businessDate, ct: ct);
+        if (!string.Equals(master.ClientType, "I", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"[insert] Customer id '{individual.CustomerId}' already belongs to client type '{master.ClientType}' and cannot be stored as an individual.");
+            return 1;
+        }
 
         individual.MasterRecordId = master.Id;
         individual.CustomerId = master.CustomerId;

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CKYC.Core.Domain;
+using CKYC.Core.Spec;
 
 namespace CKYC.Processor.Commands;
 
@@ -39,8 +40,22 @@ public sealed class InsertLegalCommand : ICommand
         // Fill any missing detail record with FVU-valid defaults (mirrors the dummy CRM).
         ApplyValidDefaults(ctx, legal);
 
+        var validationErrors = LegalEntityRecordValidator.Validate(legal);
+        if (validationErrors.Count > 0)
+        {
+            Console.Error.WriteLine("[insert-legal] Legal entity failed create-format validation:");
+            foreach (var error in validationErrors)
+                Console.Error.WriteLine($"  - [{error.RecordType}/{error.FieldName}] {error.ErrorDescription}");
+            return 1;
+        }
+
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
         var master = await ctx.Master.EnsureAsync(legal.CustomerId, businessDate, "L", ct);
+        if (!string.Equals(master.ClientType, "L", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine($"[insert-legal] Customer id '{legal.CustomerId}' already belongs to client type '{master.ClientType}' and cannot be stored as a legal entity.");
+            return 1;
+        }
 
         legal.MasterRecordId = master.Id;
         legal.CustomerId = master.CustomerId;
@@ -69,26 +84,47 @@ public sealed class InsertLegalCommand : ICommand
             : ctx.CrmLegalEntities.GetLegalEntity(legal.CustomerId, legal.EntityConstitution);
 
         if (legal.Proofs.Count == 0 && defaults.Proofs.Count > 0) legal.Proofs = defaults.Proofs;
+        else if (legal.Proofs.Count > 0 && defaults.Proofs.Count > 0) FillMissingStrings(legal.Proofs[0], defaults.Proofs[0]);
         if (legal.RegisteredAddress is null) legal.RegisteredAddress = defaults.RegisteredAddress;
+        else if (defaults.RegisteredAddress is not null) FillMissingStrings(legal.RegisteredAddress, defaults.RegisteredAddress);
         if (legal.PrincipalAddress is null) legal.PrincipalAddress = defaults.PrincipalAddress;
+        else if (defaults.PrincipalAddress is not null) FillMissingStrings(legal.PrincipalAddress, defaults.PrincipalAddress);
         if (legal.Contact is null) legal.Contact = defaults.Contact;
+        else if (defaults.Contact is not null) FillMissingStrings(legal.Contact, defaults.Contact);
         if (legal.RelatedParties.Count == 0) legal.RelatedParties = defaults.RelatedParties;
         if (legal.Other is null) legal.Other = defaults.Other;
+        else if (defaults.Other is not null) FillMissingStrings(legal.Other, defaults.Other);
 
         // Populate record-20 fields the user may have omitted but the format requires.
-        legal.RegisteredAddressDocument ??= defaults.RegisteredAddressDocument;
-        legal.PrincipalAddressDocument ??= defaults.PrincipalAddressDocument;
-        legal.Pan ??= defaults.Pan;
-        legal.PanVerified ??= defaults.PanVerified;
-        legal.PanDocument ??= defaults.PanDocument;
-        legal.TinGstNumber ??= defaults.TinGstNumber;
-        legal.TinGstnDocument ??= defaults.TinGstnDocument;
-        legal.Form97 ??= defaults.Form97;
-        legal.PlaceOfIncorporation ??= defaults.PlaceOfIncorporation;
-        legal.CountryOfIncorporation ??= defaults.CountryOfIncorporation;
-        legal.TinIssuingCountry ??= defaults.TinIssuingCountry;
-        legal.EntityConstitution ??= defaults.EntityConstitution;
+        legal.SearchKey = Missing(legal.SearchKey, defaults.SearchKey) ?? string.Empty;
+        legal.EntityConstitution = Missing(legal.EntityConstitution, defaults.EntityConstitution) ?? string.Empty;
+        legal.ListedCompany = Missing(legal.ListedCompany, defaults.ListedCompany);
+        legal.RegisteredFirm = Missing(legal.RegisteredFirm, defaults.RegisteredFirm);
+        legal.RegisteredTrust = Missing(legal.RegisteredTrust, defaults.RegisteredTrust);
+        legal.DateOfIncorporation = Missing(legal.DateOfIncorporation, defaults.DateOfIncorporation);
+        legal.DateOfCommencement = Missing(legal.DateOfCommencement, defaults.DateOfCommencement);
+        legal.PlaceOfIncorporation = Missing(legal.PlaceOfIncorporation, defaults.PlaceOfIncorporation);
+        legal.CountryOfIncorporation = Missing(legal.CountryOfIncorporation, defaults.CountryOfIncorporation);
+        legal.TinIssuingCountry = Missing(legal.TinIssuingCountry, defaults.TinIssuingCountry);
+        if (!string.Equals(legal.Form97?.Trim(), "Y", StringComparison.OrdinalIgnoreCase)) legal.Pan = Missing(legal.Pan, defaults.Pan);
+        legal.PanVerified = Missing(legal.PanVerified, defaults.PanVerified);
+        legal.PanDocument = Missing(legal.PanDocument, defaults.PanDocument);
+        legal.TinGstNumber = Missing(legal.TinGstNumber, defaults.TinGstNumber);
+        legal.TinGstnDocument = Missing(legal.TinGstnDocument, defaults.TinGstnDocument);
+        legal.Form97 = Missing(legal.Form97, defaults.Form97);
+        legal.RegisteredAddressDocument = Missing(legal.RegisteredAddressDocument, defaults.RegisteredAddressDocument);
+        legal.PrincipalAddressDocument = Missing(legal.PrincipalAddressDocument, defaults.PrincipalAddressDocument);
     }
+
+    private static void FillMissingStrings<T>(T target, T defaults)
+    {
+        foreach (var property in typeof(T).GetProperties().Where(p => p.PropertyType == typeof(string) && p.CanRead && p.CanWrite))
+            if (string.IsNullOrWhiteSpace((string?)property.GetValue(target)))
+                property.SetValue(target, property.GetValue(defaults));
+    }
+
+    private static string? Missing(string? value, string? fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value;
 
     private static void Normalize(LegalEntity legal)
     {
