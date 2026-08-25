@@ -1,0 +1,15 @@
+10|IN9797|12345|L|2|V1.0|25-08-2026||||
+20|1|LMOefac5d71b2b6423ab|Meridian Software Pvt Ltd|D|N|N|N|15-03-2015||Mumbai|IN|IN|AAABC1234C||222368782517280|Pan.pdf|Y|TinGst.pdf|1|1|1|2|1
+30|2|1|CertificateOfIncorporation.pdf|U50475981683425565286|MemorandumAndArticles.pdf|ResolutionPoA.pdf|NamesSeniorManagement.pdf||||||||||||||||||||||||||||
+40|3|1|A-301 Tech Park|Andheri East|Mumbai|Mumbai|MH|225|400069|||IN|A||N|B-505 Business Bay|Pune||Pune|MH|225|411014|||IN|A||RegAddress.pdf|PrinAddress.pdf
+50|4|1|+91|9876543210|+91||info@meridian.com|||
+60|5|1|Director|78793018905619|Ownership|15.00||09189332
+60|6|1|Beneficial Owner|22319635866006|Ownership|20.00||
+70|7|1|Fetched from CRM|Y|N|N|25-08-2026|Anusaya|A236|SM|Kamlamills|50475981683425|PhonePe_Limited|IN0238|D1.pdf|Y|C3.pdf|Mumbai|25-08-2026
+20|8|LMOa4998b65abe346f49|Sunrise Charitable Trust|H|N|N|N|01-01-2010||Pune|IN|IN|AAAC24049A||228893781331523|Pan.pdf|Y|TinGst.pdf|1|1|1|2|1
+30|9|8|||||||||||||||TrustRegistrationCertificate.pdf|TR295221|TrustDeed.pdf|NamesBeneficiariesTrustees.pdf|TrustPowerOfAttorney.pdf||||||||||||||
+40|10|8|A-301 Tech Park|Andheri East|Mumbai|Mumbai|MH|225|400069|||IN|A||N|B-505 Business Bay|Pune||Pune|MH|225|411014|||IN|A||RegAddress.pdf|PrinAddress.pdf
+50|11|8|+91|9812345678|+91||trust@sunrise.org|||
+60|12|8|Director|87125737703470|Ownership|19.00||43647066
+60|13|8|Beneficial Owner|96321654844781|Ownership|24.00||
+70|14|8|Fetched from CRM|Y|N|N|25-08-2026|Anusaya|A236|SM|Kamlamills|57928095256518|PhonePe_Limited|IN0238|D1.pdf|Y|C3.pdf|Mumbai|25-08-2026

@@ -19,15 +19,21 @@ public sealed class CommandRegistry
         {
             new FetchCommand(),
             new InsertCommand(),
+            new InsertLegalCommand(),
             new CrmServeCommand(),
             new StoreCommand(),
             new RetryCommand(),
             new ReattemptCommand(),
             new BuildZipCommand(),
+            new BuildZipLegalCommand(),
             new FvuCommand(),
             new ResponseCommand(),
             new ReconcileCommand(),
             new StatusCommand(),
+            new SearchLoadCommand(),
+            new SearchProcessCommand(),
+            new SearchFvuCommand(),
+            new SearchResponseCommand(),
         });
 
     public string Help()
@@ -52,6 +58,10 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe response read");
         sb.AppendLine("  CKYCProcessor.exe reconcile --kind cersai --stakeholder \"Operations\"");
         sb.AppendLine("  CKYCProcessor.exe status");
+        sb.AppendLine("  CKYCProcessor.exe search-load search_customer.json");
+        sb.AppendLine("  CKYCProcessor.exe search-process --limit 1000");
+        sb.AppendLine("  CKYCProcessor.exe search-fvu");
+        sb.AppendLine("  CKYCProcessor.exe search-response");
         return sb.ToString();
     }
 }

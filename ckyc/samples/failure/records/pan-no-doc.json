@@ -1,0 +1,13 @@
+{
+  "sourceCustomerId": "TEST-FAIL-PAN-01",
+  "searchKey": "IMO26082433347192328",
+  "kycType": "N",
+  "name": { "title": "Mr.", "firstName": "Vijay", "middleName": "", "lastName": "Malhotra" },
+  "motherName": { "title": "Mrs.", "firstName": "Kamla", "middleName": "", "lastName": "Malhotra" },
+  "dateOfBirth": "22-06-1985",
+  "minor": "N",
+  "gender": "M",
+  "pan": "ABCDE1234F",
+  "panVerified": "Y",
+  "panDocument": ""
+}

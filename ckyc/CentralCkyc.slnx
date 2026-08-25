@@ -7,4 +7,7 @@
     <Project Path="src/CKYC.Fvu/CKYC.Fvu.csproj" />
     <Project Path="src/CKYC.Processor/CKYC.Processor.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CKYC.SpecChecks/CKYC.SpecChecks.csproj" />
+  </Folder>
 </Solution>

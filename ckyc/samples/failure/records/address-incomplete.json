@@ -1,0 +1,14 @@
+{
+  "sourceCustomerId": "TEST-FAIL-ADDR-01",
+  "searchKey": "IMO26082433347192328",
+  "kycType": "N",
+  "name": { "title": "Mr.", "firstName": "Sachin", "middleName": "", "lastName": "Deshmukh" },
+  "motherName": { "title": "Mrs.", "firstName": "Sunita", "middleName": "", "lastName": "Deshmukh" },
+  "dateOfBirth": "09-09-1990",
+  "minor": "N",
+  "gender": "M",
+  "permanentAddress": {
+    "line1": "Flat 5, Westside Towers",
+    "country": "IN"
+  }
+}

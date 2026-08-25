@@ -13,6 +13,19 @@ public sealed class AppSettings
     public FvuSettings Fvu { get; set; } = new();
     public SimulationSettings Simulation { get; set; } = new();
     public RetrySettings Retry { get; set; } = new();
+    public SearchSettings Search { get; set; } = new();
+}
+
+/// <summary>CKYCR individual-search file settings.</summary>
+public sealed class SearchSettings
+{
+    public string UserId { get; set; } = "IRA000337";
+    public string FiCode { get; set; } = "IN9797";
+    public string RegionCode { get; set; } = "001";
+    public string VersionNumber { get; set; } = "V1.1";
+    public int SequenceStart { get; set; } = 2;
+    public int ClaimTimeoutMinutes { get; set; } = 30;
+    public string OutputRoot { get; set; } = "runtime/search";
 }
 
 /// <summary>Persistence settings. The "provider" switch lets a SQL Server deployment be used in production.</summary>

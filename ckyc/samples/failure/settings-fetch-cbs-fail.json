@@ -1,0 +1,51 @@
+{
+  "database": {
+    "provider": "sqlite",
+    "connectionString": "Data Source=D:\\centralprocessing\\ckyc\\runtime\\ckyc.db;Cache=Shared",
+    "createSchemaOnStartup": true
+  },
+  "source": {
+    "mode": "generate",
+    "generateCount": 12,
+    "generateSeed": 20260824
+  },
+  "crm": {
+    "mode": "InProcess",
+    "baseUrl": "http://127.0.0.1:5291",
+    "customersEndpoint": "/api/customers/{id}",
+    "listEndpoint": "/api/customers",
+    "timeoutSeconds": 30
+  },
+  "batch": {
+    "userId": "IAU010441",
+    "fiCode": "IN0238",
+    "regionCode": "01",
+    "clientType": "I",
+    "versionNumber": "V1.0",
+    "sequenceStart": 2,
+    "outputRoot": "D:\\centralprocessing\\ckyc\\runtime\\output"
+  },
+  "fvu": {
+    "exePath": "D:\\centralprocessing\\vendor\\FVU_RUN_UTILITY.exe",
+    "workspaceRoot": "D:\\centralprocessing\\ckyc\\runtime",
+    "apiBaseUrl": "http://localhost:9091",
+    "apiEndpoint": "/api/search-validate/file-with-support",
+    "triggerSource": "BATCH",
+    "requestTimeoutSeconds": 600,
+    "maxRetries": 3,
+    "useRealFvu": true
+  },
+  "simulation": {
+    "saveErrorsEnabled": false,
+    "saveErrorEvery": 0,
+    "fvuFailEvery": 0,
+    "cbsFetchErrorsEnabled": true,
+    "cbsFetchFailEvery": 3,
+    "cbsFetchFailForCustomerId": "CUST-CBS-FAIL-01"
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "backoffBaseHours": 24,
+    "backoffMultiplier": 2.0
+  }
+}

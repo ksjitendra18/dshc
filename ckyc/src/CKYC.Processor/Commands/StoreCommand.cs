@@ -11,7 +11,7 @@ public sealed class StoreCommand : ICommand
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
         var limit = OptionInt(args, "--limit") ?? 1000;
-        var pending = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Pending, limit, ct);
+        var pending = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Pending, limit, ct: ct);
         if (pending.Count == 0)
         {
             Console.WriteLine("[store] No Pending records to process.");

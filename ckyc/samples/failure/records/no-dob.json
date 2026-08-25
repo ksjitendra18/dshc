@@ -1,0 +1,10 @@
+{
+  "sourceCustomerId": "TEST-FAIL-NODOB-01",
+  "searchKey": "IMO26082433347192328",
+  "kycType": "N",
+  "name": { "title": "Mr.", "firstName": "Rakesh", "middleName": "", "lastName": "Mehta" },
+  "motherName": { "title": "Mrs.", "firstName": "Savitri", "middleName": "", "lastName": "Mehta" },
+  "dateOfBirth": "",
+  "minor": "N",
+  "gender": "M"
+}

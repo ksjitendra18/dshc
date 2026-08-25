@@ -316,3 +316,145 @@ CREATE TABLE master_record_reattempt (
 );
 CREATE INDEX ix_master_reattempt_master ON master_record_reattempt (MasterRecordId);
 GO
+
+-- CKYCR individual search request queue. ProcessingStatus:
+-- 0 Pending, 1 Processing (claimed), 2 SRC generated, 3 Failed.
+CREATE TABLE search_request (
+    Id                       BIGINT IDENTITY(1,1) PRIMARY KEY,
+    ExternalRequestId        NVARCHAR(50),
+    SourceCustomerId         NVARCHAR(50),
+    ClientType               NVARCHAR(1),
+    SearchOption             INT,
+    IdentityTypeAndNumber    NVARCHAR(2000),
+    FirstName                NVARCHAR(33),
+    MiddleName               NVARCHAR(33),
+    LastName                 NVARCHAR(33),
+    DateOfBirth              NVARCHAR(10),
+    LegalEntityName          NVARCHAR(99),
+    DateOfIncorporation      NVARCHAR(10),
+    Gender                   NVARCHAR(1),
+    PhotoReferenceNumber     NVARCHAR(40),
+    Relation                 NVARCHAR(50),
+    RelationFirstName        NVARCHAR(33),
+    RelationMiddleName       NVARCHAR(33),
+    RelationLastName         NVARCHAR(33),
+    MobileNumber             NVARCHAR(10),
+    VerifiableCredential     NVARCHAR(50),
+    Constitution             NVARCHAR(1),
+    RawRequestJson           NVARCHAR(MAX),
+    ProcessingStatus         INT,
+    ClaimToken               NVARCHAR(36),
+    ClaimedAt                DATETIME2,
+    ProcessedAt              DATETIME2,
+    OutputFileName           NVARCHAR(260),
+    OutputLineNumber         INT,
+    ResponseStatus           NVARCHAR(50),
+    LastSearchKey            NVARCHAR(20),
+    LastCkycReference        NVARCHAR(15),
+    LastResponseRemark       NVARCHAR(250),
+    ResponseReadAt           DATETIME2,
+    LastError                NVARCHAR(2000),
+    CreatedAt                DATETIME2,
+    UpdatedAt                DATETIME2
+);
+CREATE INDEX ix_search_request_status ON search_request (ProcessingStatus, Id);
+CREATE INDEX ix_search_request_claim ON search_request (ClaimToken);
+GO
+
+CREATE TABLE search_batch (
+    Id             BIGINT IDENTITY(1,1) PRIMARY KEY,
+    BusinessDate   DATE,
+    FileSequence   INT,
+    ClaimToken     NVARCHAR(36),
+    RecordCount    INT,
+    Status         INT,
+    FileName       NVARCHAR(260),
+    FilePath       NVARCHAR(1000),
+    FvuZipPath     NVARCHAR(1000),
+    FvuHash        NVARCHAR(128),
+    Error          NVARCHAR(2000),
+    CreatedAt      DATETIME2,
+    CompletedAt    DATETIME2
+);
+CREATE INDEX ix_search_batch_date ON search_batch (BusinessDate, FileSequence);
+GO
+
+CREATE TABLE search_response (
+    Id                          BIGINT IDENTITY(1,1) PRIMARY KEY,
+    SearchRequestId             BIGINT,
+    ResponseFileName            NVARCHAR(260),
+    ResponseFileNumber          INT,
+    LineNumber                  INT,
+    InputRecordLineNumber       INT,
+    ClientType                  NVARCHAR(1),
+    SearchByOvdType             NVARCHAR(1),
+    SearchByOvdNumber           NVARCHAR(15),
+    SearchKey                   NVARCHAR(20),
+    CkycReferenceNumber         NVARCHAR(15),
+    FirstName                   NVARCHAR(33),
+    MiddleName                  NVARCHAR(33),
+    LastName                    NVARCHAR(33),
+    Gender                      NVARCHAR(1),
+    MobileNumber                NVARCHAR(12),
+    EmailAddress                NVARCHAR(99),
+    LastUpdatedDate             NVARCHAR(10),
+    Cin                         NVARCHAR(40),
+    LegalEntityName             NVARCHAR(150),
+    PhotoReference              NVARCHAR(20),
+    RegistrationDate            NVARCHAR(12),
+    DeactivationReason          NVARCHAR(100),
+    Remark                      NVARCHAR(250),
+    PanDocument                 NVARCHAR(1),
+    AadhaarDocument             NVARCHAR(1),
+    PassportDocument            NVARCHAR(1),
+    DrivingLicenseDocument      NVARCHAR(1),
+    VoterIdDocument             NVARCHAR(1),
+    NregaDocument               NVARCHAR(1),
+    DisabilityDocument          NVARCHAR(1),
+    Form6061Document            NVARCHAR(1),
+    ForeignJurisdictionDocument NVARCHAR(1),
+    NprDocument                 NVARCHAR(1),
+    UtilityBillDocument         NVARCHAR(1),
+    IncorporationDocument       NVARCHAR(1),
+    MemorandumDocument          NVARCHAR(1),
+    RegistrationCertificate     NVARCHAR(1),
+    PartnershipDeed             NVARCHAR(1),
+    TrustDeed                   NVARCHAR(1),
+    SupportingPoiDocument       NVARCHAR(1),
+    OtherDocument               NVARCHAR(1),
+    Filler1                     NVARCHAR(1),
+    Filler2                     NVARCHAR(1),
+    Filler3                     NVARCHAR(1),
+    Filler4                     NVARCHAR(1),
+    Filler5                     NVARCHAR(1),
+    Filler6                     NVARCHAR(1),
+    Filler7                     NVARCHAR(1),
+    Filler8                     NVARCHAR(1),
+    RecordLevelHash             NVARCHAR(128),
+    RawResponseData             NVARCHAR(MAX),
+    CreatedAt                   DATETIME2
+);
+CREATE INDEX ix_search_response_request ON search_response (SearchRequestId);
+GO
+
+CREATE TABLE search_response_file (
+    Id                     BIGINT IDENTITY(1,1) PRIMARY KEY,
+    SearchBatchId          BIGINT,
+    ResponseFileName       NVARCHAR(260),
+    ResponseFileNumber     INT,
+    FiCode                 NVARCHAR(6),
+    RegionCode             NVARCHAR(11),
+    TotalRecords           INT,
+    TotalProcessed         INT,
+    RecordsUnderProcessing INT,
+    RecordsFailed          INT,
+    ResponseTimestamp      NVARCHAR(20),
+    Filler                 NVARCHAR(50),
+    RawHeaderData          NVARCHAR(MAX),
+    SourceArchiveName      NVARCHAR(260),
+    SourceHash             NVARCHAR(128),
+    CreatedAt              DATETIME2
+);
+CREATE INDEX ix_search_response_file_batch ON search_response_file (SearchBatchId);
+CREATE INDEX ix_search_response_file_hash ON search_response_file (SourceHash);
+GO

@@ -17,11 +17,11 @@ public interface ICkycDatabase
 public interface IMasterRepository
 {
     Task<FetchResult> UpsertDailyAsync(IReadOnlyCollection<string> customerIds, DateOnly businessDate, CancellationToken ct = default);
-    Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetRetryableAsync(int maxRetries, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
     Task<MasterRecord?> GetByIdAsync(long id, CancellationToken ct = default);
-    Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, CancellationToken ct = default);
+    Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, string? clientType = null, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetByBatchFileAsync(string batchFile, CancellationToken ct = default);
     Task<MasterRecord?> GetByBatchLineAsync(string batchFile, int record20Line, CancellationToken ct = default);
 
@@ -84,6 +84,13 @@ public interface IIndividualRepository
     Task<IReadOnlyList<Individual>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
 }
 
+/// <summary>Legal-entity record tables operations (step 3 persistence, client type L).</summary>
+public interface ILegalEntityRepository
+{
+    Task<SaveRecordResult> SaveAsync(LegalEntity record, CancellationToken ct = default);
+    Task<IReadOnlyList<LegalEntity>> GetBySourceCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
+}
+
 /// <summary>Dummy CRM API client (step 2).</summary>
 public interface ICrmApiClient
 {
@@ -95,6 +102,12 @@ public interface ICrmApiClient
 public interface IBatchGenerator
 {
     Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate, CancellationToken ct = default);
+}
+
+/// <summary>Builds the pipe-delimited .UPL file and its zip archive for legal entities (step 4, client type L).</summary>
+public interface ILegalEntityBatchGenerator
+{
+    Task<GeneratedBatch> GenerateAsync(IReadOnlyList<LegalEntity> records, DateOnly businessDate, CancellationToken ct = default);
 }
 
 /// <summary>Invokes the FVU over a generated batch and returns the processed output (step 5).</summary>

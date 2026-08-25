@@ -38,7 +38,7 @@ public sealed class CkycBatchGenerator : IBatchGenerator
         if (valid.Count == 0)
             throw new InvalidOperationException(
                 $"All {records.Count} record(s) failed validation — no batch was produced. " +
-                $"Run `build-zip` with valid records, or inspect the validation errors below.");
+                $"{FormatValidationFailures(skipped)}");
 
         var writer = new CkycUploadWriter(_batch);
         var content = writer.Write(valid, businessDate);
@@ -98,6 +98,10 @@ public sealed class CkycBatchGenerator : IBatchGenerator
 
         return (valid, skipped);
     }
+
+    private static string FormatValidationFailures(IEnumerable<SkippedRecord> skipped) =>
+        string.Join(" ", skipped.Select(s =>
+            $"{s.SourceCustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
 
     private static HashSet<string> EnumerateDocs(Individual r)
     {

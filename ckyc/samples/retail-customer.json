@@ -1,0 +1,100 @@
+{
+  "sourceCustomerId": "CUST-RETAIL-5224580",
+  "searchKey": "IOV26082558554283867",
+  "kycType": "N",
+  "name": {
+    "title": "Mr",
+    "firstName": "Jks",
+    "middleName": "Kumar",
+    "lastName": "S"
+  },
+  "motherName": {
+    "title": "Mrs",
+    "firstName": "Mee",
+    "middleName": "",
+    "lastName": "D"
+  },
+  "fatherName": {
+    "title": "Mr",
+    "firstName": "Sks",
+    "middleName": "",
+    "lastName": "K"
+  },
+  "dateOfBirth": "18-03-2002",
+  "minor": "N",
+  "gender": "M",
+  "nationality": "IN",
+  "nationalitySupportedByDocument": "Y",
+  "residentialStatus": "Resident",
+  "residentialStatusSupportedByDocument": "Y",
+  "differentlyAbledStatus": "N",
+
+  "genderProvidedInOvd": "Y",
+  "genderMatchWithOvd": "Y",
+  "dateOfBirthMatchWithOvd": "Y",
+  "nameMatchWithOvd": "Y",
+  "photoProvidedMatchWithOvd": "Y",
+
+  "pan": "ABCPD1234E",
+  "panVerified": "Y",
+  "panDocument": "Pan.pdf",
+  "photoOfIndividual": "Photo.jpg",
+
+  "proofs": [
+    {
+      "ovdType": "E",
+      "modeOfAadhaarVerification": "B",
+      "lengthOfAadhaar": "A",
+      "idNumber": "0879",
+      "certifiedCopyWithOriginal": "",
+      "modeOfAuthentication": "A",
+      "ekycDataFromUidai": "Y",
+      "copyOfOvd": "AdhaarAP.pdf"
+    }
+  ],
+
+  "permanentAddress": {
+    "line1": "1330",
+    "line2": "Indira ",
+    "line3": "Model ",
+    "country": "IN",
+    "state": "CG",
+    "district": "309",
+    "city": "bHI",
+    "pinCode": "490020",
+    "addressSupportedWithDocument": "Y",
+    "addressMatchWithOvd": "Exact Match",
+    "copyOfOvd": "AdhaarAP.pdf"
+  },
+
+  "contact": {
+    "email": "SOME@gmail.com",
+    "countryCode": "+91",
+    "mobileNumber": "7897897894",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "Y"
+  },
+
+  "other": {
+    "remarks": "Individual test record",
+    "videoKycWithoutOfficial": "N",
+    "videoKycWithReOfficial": "N",
+    "faceToFaceWithReOfficial": "Y",
+    "faceToFaceWithNonOfficial": "N",
+    "nonFaceToFace": "N",
+    "attestationDate": "25-08-2026",
+    "employeeName": "Sahilsharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "21171176839909",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN9797",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "clientConsent": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "25-08-2026"
+  }
+}

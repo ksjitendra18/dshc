@@ -49,9 +49,17 @@ public sealed class MasterRepository : IMasterRepository
         return new FetchResult(inserted, skipped, customerIds.Count);
     }
 
-    public async Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, CancellationToken ct = default)
-        => await QueryAsync("SELECT * FROM master_record WHERE Status=@s ORDER BY Id LIMIT @n",
-            c => { c.Parameters.Add(NewParam("@s", (int)status)); c.Parameters.Add(NewParam("@n", limit)); }, ct);
+    public async Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default)
+    {
+        var filter = string.IsNullOrWhiteSpace(clientType) ? "" : " AND ClientType=@ct";
+        return await QueryAsync($"SELECT * FROM master_record WHERE Status=@s{filter} ORDER BY Id LIMIT @n",
+            c =>
+            {
+                c.Parameters.Add(NewParam("@s", (int)status));
+                c.Parameters.Add(NewParam("@n", limit));
+                if (!string.IsNullOrWhiteSpace(clientType)) c.Parameters.Add(NewParam("@ct", clientType));
+            }, ct);
+    }
 
     public async Task<IReadOnlyList<MasterRecord>> GetRetryableAsync(int maxRetries, int limit, CancellationToken ct = default)
         => await QueryAsync(
@@ -86,7 +94,7 @@ public sealed class MasterRepository : IMasterRepository
         return rows.Count > 0 ? rows[0] : null;
     }
 
-    public async Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, CancellationToken ct = default)
+    public async Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, string? clientType = null, CancellationToken ct = default)
     {
         var existing = await GetByCustomerIdsAsync(new[] { customerId }, ct);
         if (existing.Count > 0) return existing[0];
@@ -97,11 +105,12 @@ public sealed class MasterRepository : IMasterRepository
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO master_record
-                (SourceCustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
+                (SourceCustomerId, ClientType, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
             VALUES
-                (@id, @date, 0, @remarks, 0, @now, @now)
+                (@id, @ct, @date, 0, @remarks, 0, @now, @now)
             """;
         cmd.Parameters.Add(NewParam("@id", customerId));
+        cmd.Parameters.Add(NewParam("@ct", string.IsNullOrWhiteSpace(clientType) ? "I" : clientType));
         cmd.Parameters.Add(NewParam("@date", business));
         cmd.Parameters.Add(NewParam("@remarks", $"Inserted on {businessDate:dd-MM-yyyy}"));
         cmd.Parameters.Add(NewParam("@now", now));

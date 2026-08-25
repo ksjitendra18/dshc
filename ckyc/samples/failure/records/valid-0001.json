@@ -1,0 +1,110 @@
+{
+  "sourceCustomerId": "TEST-VALID-0001",
+  "searchKey": "IMO26082433347192328",
+  "kycType": "N",
+  "name": { "title": "Mr.", "firstName": "Ashish", "middleName": "", "lastName": "Kumar" },
+  "motherName": { "title": "Mrs.", "firstName": "Meera", "middleName": "", "lastName": "Kumar" },
+  "dateOfBirth": "15-04-1988",
+  "minor": "N",
+  "gender": "M",
+  "nationality": "IN",
+  "nationalitySupportedByDocument": "Y",
+  "residentialStatus": "Resident",
+  "residentialStatusSupportedByDocument": "Y",
+  "differentlyAbledStatus": "N",
+
+  "genderProvidedInOvd": "Y",
+  "genderMatchWithOvd": "Y",
+  "dateOfBirthMatchWithOvd": "Y",
+  "nameMatchWithOvd": "Y",
+  "photoProvidedMatchWithOvd": "Y",
+
+  "pan": "ABCDE1234F",
+  "panVerified": "Y",
+  "panDocument": "Pan.pdf",
+
+  "proofs": [
+    {
+      "ovdType": "E",
+      "modeOfAadhaarVerification": "B",
+      "lengthOfAadhaar": "A",
+      "idNumber": "1234",
+      "certifiedCopyWithOriginal": "",
+      "modeOfAuthentication": "A",
+      "ekycDataFromUidai": "Y",
+      "copyOfOvd": "AdhaarAP.jpg"
+    }
+  ],
+
+  "permanentAddress": {
+    "line1": "B-109 Man Deep CHS LTD",
+    "line2": "Navghar Road",
+    "line3": "Saibaba Nagar",
+    "country": "IN",
+    "state": "MH",
+    "district": "225",
+    "city": "Bhayandar",
+    "pinCode": "401106",
+    "addressSupportedWithDocument": "N",
+    "addressMatchWithOvd": "N"
+  },
+  "currentAddress": {
+    "line1": "ABC",
+    "line2": "CCC",
+    "line3": "CCC",
+    "country": "IN",
+    "state": "MH",
+    "district": "225",
+    "city": "BHayandar",
+    "pinCode": "401107",
+    "addressSupportedWithDocument": "N",
+    "addressMatchWithOvd": "N",
+    "proofOfAddress": "1",
+    "proofOfAddressType": "E",
+    "lengthOfAadhaar": "A",
+    "idNumber": "1234",
+    "modeOfAadhaarVerification": "B",
+    "copyOfOvd": "AdhaarAP.jpg",
+    "remoteGeoTagging": "Y",
+    "addressExactlyMatch": "Exact Match",
+    "positiveVerification": "Y",
+    "physicalVerificationByThirdParty": "Y",
+    "physicalVerificationByReOfficial": "Y",
+    "presenceInRepository": "Y"
+  },
+
+  "contact": {
+    "email": "ashish.kumar@yopmail.com",
+    "countryCode": "+91",
+    "mobileNumber": "9876543210",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "Y"
+  },
+
+  "relatedParties": [
+    { "relatedPersonType": "Assignee", "ckycNumberOfRelatedPerson": "33720047736138" }
+  ],
+
+  "other": {
+    "remarks": "Valid seed record",
+    "videoKycWithoutOfficial": "N",
+    "videoKycWithReOfficial": "N",
+    "faceToFaceWithReOfficial": "Y",
+    "faceToFaceWithNonOfficial": "N",
+    "nonFaceToFace": "N",
+    "attestationDate": "24-08-2026",
+    "employeeName": "Anusaya",
+    "employeeCode": "A236",
+    "employeeDesignation": "SM",
+    "employeeBranch": "Kamlamills",
+    "employeeCkycId": "33720047736138",
+    "institutionName": "PhonePe_Limited",
+    "institutionCode": "IN0238",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "clientConsent": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "24-08-2026"
+  }
+}

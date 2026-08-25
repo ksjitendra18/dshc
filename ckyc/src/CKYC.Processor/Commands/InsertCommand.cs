@@ -40,7 +40,7 @@ public sealed class InsertCommand : ICommand
 
         // Get-or-create the master row, then save the record tables.
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
-        var master = await ctx.Master.EnsureAsync(individual.SourceCustomerId, businessDate, ct);
+        var master = await ctx.Master.EnsureAsync(individual.SourceCustomerId, businessDate, ct: ct);
 
         individual.MasterRecordId = master.Id;
         individual.SourceCustomerId = master.SourceCustomerId;
@@ -66,7 +66,11 @@ public sealed class InsertCommand : ICommand
 
         if (individual.Proofs.Count == 0) individual.Proofs = defaults.Proofs;
         if (individual.PermanentAddress is null) individual.PermanentAddress = defaults.PermanentAddress;
-        if (individual.CurrentAddress is null) individual.CurrentAddress = defaults.CurrentAddress;
+        // No current address supplied => treat it as "same as the permanent (present) address".
+        if (individual.CurrentAddress is null)
+            individual.CurrentAddress = individual.PermanentAddress is null
+                ? defaults.CurrentAddress
+                : CloneAddress(individual.PermanentAddress);
         if (individual.Contact is null) individual.Contact = defaults.Contact;
         if (individual.RelatedParties.Count == 0) individual.RelatedParties = defaults.RelatedParties;
         if (individual.Other is null) individual.Other = defaults.Other;
@@ -110,6 +114,7 @@ public sealed class InsertCommand : ICommand
             p.ModeOfAuthentication = Coalesce(p.ModeOfAuthentication, dp.ModeOfAuthentication);
             p.EkycDataFromUidai = Coalesce(p.EkycDataFromUidai, dp.EkycDataFromUidai);
             p.CopyOfOvd = Coalesce(p.CopyOfOvd, dp.CopyOfOvd);
+            
         }
 
         // ---- record 40 (current-address proof-of-address fields) ----
@@ -134,6 +139,28 @@ public sealed class InsertCommand : ICommand
 
     private static string Coalesce(string? value, string? fallback)
         => string.IsNullOrWhiteSpace(value) ? fallback ?? string.Empty : value;
+
+    /// <summary>Deep-copies an address block so the current address can mirror the permanent one.</summary>
+    private static AddressDetails CloneAddress(AddressDetails a) => new()
+    {
+        Line1 = a.Line1, Line2 = a.Line2, Line3 = a.Line3,
+        Country = a.Country, State = a.State, District = a.District, City = a.City,
+        PinCode = a.PinCode, PinCodeOthers = a.PinCodeOthers, Digipin = a.Digipin,
+        AddressSupportedWithDocument = a.AddressSupportedWithDocument,
+        AddressMatchWithOvd = a.AddressMatchWithOvd,
+        ProofOfAddress = a.ProofOfAddress, ProofOfAddressType = a.ProofOfAddressType,
+        LengthOfAadhaar = a.LengthOfAadhaar, IdNumber = a.IdNumber,
+        ModeOfAadhaarVerification = a.ModeOfAadhaarVerification, OvdExpiryDate = a.OvdExpiryDate,
+        DeemedPoa = a.DeemedPoa, DeemedPoaVerified = a.DeemedPoaVerified,
+        CertifiedCopyWithOriginal = a.CertifiedCopyWithOriginal, EquivalentEDoc = a.EquivalentEDoc,
+        VerifiedFromDigiLocker = a.VerifiedFromDigiLocker, RemoteGeoTagging = a.RemoteGeoTagging,
+        AddressExactlyMatch = a.AddressExactlyMatch, PositiveVerification = a.PositiveVerification,
+        PhysicalVerificationByThirdParty = a.PhysicalVerificationByThirdParty,
+        PhysicalVerificationByReOfficial = a.PhysicalVerificationByReOfficial,
+        PresenceInRepository = a.PresenceInRepository,
+        ForeignGovernmentDocument = a.ForeignGovernmentDocument,
+        CopyOfOvd = a.CopyOfOvd,
+    };
 
     /// <summary>Re-initialize any name block / collection a JSON might have set to null.</summary>
     private static void Normalize(Individual i)

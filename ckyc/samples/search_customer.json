@@ -1,0 +1,30 @@
+{
+  "requests": [
+    {
+      "requestId": "SEARCH-0001",
+      "customerId": "CUST-0001",
+      "clientType": "I",
+      "searchOption": 1,
+      "identityTypeAndNumber": "C^GYTPS2083A"
+    },
+    {
+      "requestId": "SEARCH-0002",
+      "customerId": "CUST-0002",
+      "clientType": "I",
+      "searchOption": 2,
+      "firstName": "Biswajit",
+      "lastName": "Das",
+      "dateOfBirth": "1993-08-12",
+      "gender": "M",
+      "relation": "FATHER",
+      "relationFirstName": "Badal"
+    },
+    {
+      "requestId": "SEARCH-0003",
+      "customerId": "CUST-0003",
+      "clientType": "I",
+      "searchOption": 4,
+      "mobileNumber": "9538006518"
+    }
+  ]
+}

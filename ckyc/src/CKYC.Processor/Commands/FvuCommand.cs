@@ -49,7 +49,7 @@ public sealed class FvuCommand : ICommand
     private static async Task MarkRecordsAsync(AppContext ctx, GeneratedBatch batch, MasterRecordStatus status,
         string? remarks, string? lastError, CancellationToken ct)
     {
-        var batched = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Batched, int.MaxValue, ct);
+        var batched = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Batched, int.MaxValue, ct: ct);
         var records = batched.Where(r => r.BatchFile == batch.UploadFileName).ToList();
         var activity = await ctx.Master.GetActivityTypeByCodeAsync(ActivityTypeCodes.FvuUpload, ct);
         foreach (var r in records)

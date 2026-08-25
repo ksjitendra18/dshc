@@ -12,7 +12,7 @@ public sealed class BuildZipCommand : ICommand
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
         var limit = OptionInt(args, "--limit") ?? 1000;
-        var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, ct);
+        var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, ct: ct);
         if (saved.Count == 0)
         {
             Console.WriteLine("[build-zip] No Saved records to batch. Run `store` first.");
@@ -98,7 +98,9 @@ public sealed class BuildZipCommand : ICommand
         }
 
         Console.WriteLine("[build-zip] Run `fvu` to submit this batch to the File Validation Utility.");
-        return 0;
+        // A partial batch is produced safely, but a non-zero exit lets automation detect
+        // that one or more requested records failed pre-flight validation.
+        return batch.SkippedCount > 0 ? 1 : 0;
     }
 
     private static int? OptionInt(string[] args, string name)

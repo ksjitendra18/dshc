@@ -171,7 +171,8 @@ public sealed class CommandLineFvuRunner
         {
             using var zip = ZipFile.OpenRead(zipPath);
             var entry = zip.Entries.FirstOrDefault(e => e.Name.EndsWith(".UPL", StringComparison.OrdinalIgnoreCase)
-                                                        || e.Name.EndsWith(".UPD", StringComparison.OrdinalIgnoreCase));
+                                                        || e.Name.EndsWith(".UPD", StringComparison.OrdinalIgnoreCase)
+                                                        || e.Name.EndsWith(".SRC", StringComparison.OrdinalIgnoreCase));
             if (entry is null) return null;
 
             using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
@@ -204,8 +205,19 @@ public sealed class CommandLineFvuRunner
             {
                 var p = line.Split('|');
                 if (p.Length < 6) continue;
+                if (string.Equals(p[0], "srNo", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Current FVU format: srNo|lineNumber|recordType|fieldName|fieldValue|errorCode|errorDescription.
+                // Older vendor documentation omits recordType and therefore has six columns.
+                if (p.Length >= 7)
+                {
+                    errs.Add(new ValidationError(
+                        int.TryParse(p[0], out var currentSr) ? currentSr : null,
+                        p[2], p[1], p[3], p[4], p[5], p[6]));
+                    continue;
+                }
                 errs.Add(new ValidationError(
-                    int.TryParse(p[0], out var sr) ? sr : null,
+                    int.TryParse(p[0], out var legacySr) ? legacySr : null,
                     null, p[1],
                     p[2], p[3], p[4], p[5]));
             }

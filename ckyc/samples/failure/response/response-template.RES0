@@ -1,0 +1,30 @@
+# ============================================================================
+# CERSAI response (reply) file template — *.UPL.RES0
+# Seed for testing `response read` with rejection remarks, including the
+# "DOCUMENT NOT AVAILABLE" failure the user asked to simulate.
+#
+# HOW TO USE
+#   1. Build a batch (valid records) and submit it to the FVU so records are
+#      Uploaded.  Note the batch key, e.g. I_IAU010441_IN0238_24082026_00003.
+#   2. Print the record-20 line numbers of the generated .UPL:
+#        .\samples\failure\scripts\print-upl-20-lines.ps1 `
+#          -Path .\runtime\output\<batchKey>\upload\<upload>.UPL
+#   3. Replace each <R20LINE> below with the Nth printed record-20 line number
+#      (1st line -> first detail, 2nd -> second, ...) so the reply lines up
+#      with the correct customer records.
+#   4. Read it:
+#        & $exe --settings .\samples\failure\settings-clean.json `
+#          response read --file .\samples\failure\response\response-template.RES0
+#
+# FORMAT (see File_Format_Upload_Individual_1.0.xlsx, "Upload_response" sheet)
+#   Record 90  header: 90|client|FI code|region|total|processed|under processing|failed|timestamp
+#   Record 100 detail: 100|line no|input record-20 line no|ack no|record status|CKYC ref no|CKYC no|rejection remark
+#   Record status: 01 = matched, 02 = no-match, 06 (or any non-01/02) = rejected
+#   Lines starting with '#' are ignored by the parser (safe to keep notes).
+# ============================================================================
+90|I|IN0238|01|5|3|2|0|24-08-2026 10:00:00
+100|1|<R20LINE>|<ACK-00001>|02|<REF-2026-00001>||
+100|2|<R20LINE>|<ACK-00002>|01|<REF-2026-00002>|<CKYC-00002>|
+100|3|<R20LINE>|<ACK-00003>|06|||DOCUMENT NOT AVAILABLE
+100|4|<R20LINE>|<ACK-00004>|06|||PAN MISMATCHED WITH PAN DATABASE
+100|5|<R20LINE>|<ACK-00005>|06|||NAME MISMATCHED WITH OVD

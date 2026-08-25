@@ -9,3 +9,7 @@ vendor/logs/*.log
 
 # ---- Safety backup of .git made before the history rewrite ----
 .git-backup*/
+cersai/*
+
+# ---- Large archive accidentally added ----
+ckyc.zip

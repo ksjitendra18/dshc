@@ -15,6 +15,7 @@ using AppContext = CKYC.Processor.AppContext;
 //   response read : step 6  CERSAI reply (.UPL.RESm) -> response table + master summary
 //   reconcile     :        manual-intervention report (retry-exhausted + CERSAI-failed)
 //   status        :        pipeline snapshot (current stage per record)
+//   search-load/process/fvu/response : individual search JSON -> SRC -> validated SRC.zip -> response tables
 // ---------------------------------------------------------------------------
 
 Console.OutputEncoding = Encoding.UTF8;

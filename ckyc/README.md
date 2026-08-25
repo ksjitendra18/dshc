@@ -17,6 +17,10 @@ CKYCProcessor.exe fvu            # 5. batch -> FVU -> processed zip + hash
 CKYCProcessor.exe response read  # 6. CERSAI reply (.UPL.RESm) -> response table + master summary
 CKYCProcessor.exe reconcile      #    manual-intervention report (retry-exhausted + CERSAI-failed)
 CKYCProcessor.exe status         #    pipeline snapshot (current stage per record)
+CKYCProcessor.exe search-load search_customer.json # search JSON -> pending request rows
+CKYCProcessor.exe search-process --limit 1000      # atomically claim rows -> .SRC
+CKYCProcessor.exe search-fvu                        # validate latest .SRC -> .SRC.zip
+CKYCProcessor.exe search-response                   # .SRC.RESm / response ZIP -> response tables
 ```
 
 The pipeline was verified **end-to-end against the real CERSAI `FVU_RUN_UTILITY.exe`**:
@@ -77,9 +81,44 @@ validation yes, other validation no"). All tables are created on startup.
 - `kyc_record_60` — related party (record type 60).
 - `kyc_record_70` — other details & attestation (record type 70).
 - `batch`, `fvu_run` — audit trail of generated batches and FVU runs.
+- `search_request` — vendor individual-search request fields plus the pending/processing/
+  generated/failed flag, claim token, output filename and record-20 line number.
+- `search_batch` — daily `.SRC` sequence allocation and generated-file audit.
+- `search_response_file`, `search_response` — the response header and request-linked
+  `.SRC.RESm` detail fields defined by `vendor/individual-format-search.xlsx` (ready for
+  response ingestion).
 
 The SQL Server equivalent is in `scripts/sqlserver/schema.sql` (set `database.provider`
 = `sqlserver` and supply a matching connection string).
+
+### Individual search process
+
+Put the input at `search_customer.json` (an example is in `samples/search_customer.json`),
+then run:
+
+```powershell
+dotnet run --project src/CKYC.Processor -- search-load search_customer.json
+dotnet run --project src/CKYC.Processor -- search-process --limit 1000
+dotnet run --project src/CKYC.Processor -- search-fvu
+dotnet run --project src/CKYC.Processor -- search-response
+```
+
+The first command only inserts rows. The second transactionally changes selected rows from
+pending (`0`) to processing (`1`) before it writes the file, preventing another processor
+from claiming them. Successful rows become generated (`2`); writer failures become failed
+(`3`). Claims older than `search.claimTimeoutMinutes` can be reclaimed after a crashed
+worker. The default naming configuration produces
+`IRA000337_IN9797_DDMMYYYY_nnnnn.SRC` under `runtime/search`.
+
+`search-fvu` submits the generated source file using the existing `fvu` configuration and,
+only after a successful validation, creates a sibling `.SRC.zip` file. The batch is recorded
+as validated (`4`) or FVU-failed (`5`), together with the FVU output path, hash and error.
+
+Place a plain `.SRC.RESm` file or its response ZIP in `runtime/search/response`, then run
+`search-response`. It stores record-10 in `search_response_file`, all record-20 lines in
+`search_response`, and updates the matching `search_request` rows using the original SRC
+filename and input record line number. Re-running the same archive is safe: its SHA-256 is
+used to prevent duplicate imports.
 
 ---
 

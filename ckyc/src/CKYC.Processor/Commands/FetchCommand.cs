@@ -88,7 +88,7 @@ public sealed class FetchCommand : ICommand
     /// </summary>
     private static async Task CbsFailAsync(AppContext ctx, string customerId, DateOnly businessDate, CancellationToken ct)
     {
-        var record = await ctx.Master.EnsureAsync(customerId, businessDate, ct);
+        var record = await ctx.Master.EnsureAsync(customerId, businessDate, ct: ct);
         var activity = await ctx.Master.GetActivityTypeByCodeAsync(ActivityTypeCodes.CbsFetch, ct);
         var attempt = record.RetryCount + 1;
         var error = $"CBS fetch failed for customer '{customerId}'";

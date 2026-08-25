@@ -167,8 +167,8 @@ public sealed class CkycUploadWriter
         f[46] = pwD ? Coalesce(r.PercentageOfImpairment, "") : "";
         f[47] = pwD ? Coalesce(r.DifferentlyAbledSupportedByDocument, "Y") : "";
 
-        // PAN document (CM) — file must be named when PAN is provided.
-        f[48] = hasPan ? Coalesce(r.PanDocument, "Pan.pdf") : "";
+        // PAN attachment is optional in the create format, including when PAN is supplied.
+        f[48] = r.PanDocument;
 
         f[49] = r.PhotoOfIndividual;
 
@@ -265,31 +265,61 @@ public sealed class CkycUploadWriter
             f[6] = "IN"; f[13] = "Y"; f[14] = "Y";
         }
 
-        // "Same as permanent address" (M) — derived from whether a distinct current address exists.
+        // "Same as permanent address" (M) — Y when the current address equals the permanent address,
+        // or when no current address was supplied. Per the create spec, when Y the current-address
+        // text and proof-of-address details are omitted, but the record-40 mandatory verification
+        // fields (Remote Geo Tagging, Positive verification, Physical verification x2) are still
+        // required and are emitted as Y.
         var curr = r.CurrentAddress;
-        var sameAsPermanent = curr is null;
+        var sameAsPermanent = curr is null || SameAddress(perm, curr);
         f[15] = sameAsPermanent ? "Y" : "N";
+
+        // These four fields are mandatory even when no distinct current-address block is needed.
+        f[37] = Coalesce(curr?.RemoteGeoTagging, "Y");
+        f[39] = Coalesce(curr?.PositiveVerification, "Y");
+        f[40] = Coalesce(curr?.PhysicalVerificationByThirdParty, "Y");
+        f[41] = Coalesce(curr?.PhysicalVerificationByReOfficial, "Y");
 
         if (curr is not null)
         {
-            // Current-address block (CM: applicable only when "Same as permanent address" = N).
-            f[16] = curr.Line1; f[17] = curr.Line2; f[18] = curr.Line3;
-            f[19] = Coalesce(curr.Country, "IN"); f[20] = curr.State; f[21] = curr.District;
-            f[22] = curr.City; f[23] = curr.PinCode; f[24] = curr.PinCodeOthers;
-            f[25] = curr.Digipin;
+            if (!sameAsPermanent)
+            {
+                // Current-address block (CM: applicable only when "Same as permanent address" = N).
+                f[16] = curr.Line1; f[17] = curr.Line2; f[18] = curr.Line3;
+                f[19] = Coalesce(curr.Country, "IN"); f[20] = curr.State; f[21] = curr.District;
+                f[22] = curr.City; f[23] = curr.PinCode; f[24] = curr.PinCodeOthers;
+                f[25] = curr.Digipin;
 
-            ResolveCurrentProof(f, curr, r, 26);
+                ResolveCurrentProof(f, curr, r, 26);
+
+                // Copy of OVD (field 44) must reference an existing file (resolved from record-30).
+                var copyOfOvd = r.Proofs.Count > 0 ? r.Proofs[0].CopyOfOvd : null;
+                if (string.IsNullOrWhiteSpace(copyOfOvd)) copyOfOvd = "AdhaarAP.jpg";
+                f[44] = copyOfOvd;
+
+                // Field 29 (ID number of the current-address proof) must match the record-30 OVD ID.
+                f[29] = r.Proofs.Count > 0 ? r.Proofs[0].IdNumber : null;
+            }
+            else
+            {
+                // Same as permanent: no current-address text or proof details are emitted.
+            }
         }
 
-        // Copy of OVD (field 44) must reference an existing file (resolved from record-30).
-        var copyOfOvd = r.Proofs.Count > 0 ? r.Proofs[0].CopyOfOvd : null;
-        if (string.IsNullOrWhiteSpace(copyOfOvd)) copyOfOvd = "AdhaarAP.jpg";
-        f[44] = copyOfOvd;
-
-        // Field 29 (ID number of the current-address proof) must match the record-30 OVD ID.
-        f[29] = r.Proofs.Count > 0 ? r.Proofs[0].IdNumber : null;
-
         return string.Join('|', f);
+    }
+
+    private static bool SameAddress(AddressDetails? a, AddressDetails? b)
+    {
+        if (a is null || b is null) return a is null && b is null;
+        return string.Equals(a.Line1, b.Line1, StringComparison.Ordinal)
+            && string.Equals(a.Line2, b.Line2, StringComparison.Ordinal)
+            && string.Equals(a.Line3, b.Line3, StringComparison.Ordinal)
+            && string.Equals(a.Country, b.Country, StringComparison.Ordinal)
+            && string.Equals(a.State, b.State, StringComparison.Ordinal)
+            && string.Equals(a.District, b.District, StringComparison.Ordinal)
+            && string.Equals(a.City, b.City, StringComparison.Ordinal)
+            && string.Equals(a.PinCode, b.PinCode, StringComparison.Ordinal);
     }
 
     private static void ResolveCurrentProof(string?[] f, AddressDetails curr, Individual r, int start)
@@ -331,8 +361,11 @@ public sealed class CkycUploadWriter
         f[start + 14] = Coalesce(curr.PhysicalVerificationByThirdParty, "Y");
         f[start + 15] = Coalesce(curr.PhysicalVerificationByReOfficial, "Y");
 
-        // Presence of DL/Passport/Voter/NREGA/NPR in census records (CM) — for OVD proof.
-        f[start + 16] = isOvd ? Coalesce(curr.PresenceInRepository, "Y") : "";
+        // Presence of DL/Passport/Voter/NREGA/NPR in census records (CM) — only applicable for those
+        // OVD proof types (Passport A / Voter B / Driving Licence D / NREGA F / NPR G). Not applicable
+        // for e.g. Aadhaar (E), so it is left blank there (ERR_118).
+        var presenceApplies = f[start + 1] is "A" or "B" or "D" or "F" or "G";
+        f[start + 16] = isOvd && presenceApplies ? Coalesce(curr.PresenceInRepository, "Y") : "";
 
         // Foreign government document (CM) — where nationality is non-Indian or foreign national.
         var foreign = !Is(r.Nationality, "IN") || Is(r.ResidentialStatus, "ForeignNational") || Is(r.ResidentialStatus, "Foreign National");
