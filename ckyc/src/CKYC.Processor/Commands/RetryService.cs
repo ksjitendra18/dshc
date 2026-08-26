@@ -1,5 +1,6 @@
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -12,6 +13,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class RetryService
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public static async Task<RetryResult> RunAsync(AppContext ctx, string? activityCode, int limit, CancellationToken ct = default)
     {
         var activities = await ctx.Master.GetActivityTypesAsync(ct);
@@ -22,7 +25,10 @@ public sealed class RetryService
 
         if (eligible.Count == 0)
         {
-            Console.WriteLine($"[retry] No retryable activity{(activityCode is null ? "" : $" '{activityCode}'")} configured.");
+            if (activityCode is null)
+                Log.Warn("[retry] No retryable activity configured.");
+            else
+                Log.Warn("[retry] No retryable activity '{ActivityCode}' configured.", activityCode);
             return new RetryResult(0, 0, 0, 0);
         }
 
@@ -34,11 +40,11 @@ public sealed class RetryService
             var records = await ctx.Master.GetRetryableForActivityAsync(activity.Code, activity.MaxAttempts, now, limit, ct);
             if (records.Count == 0)
             {
-                Console.WriteLine($"[retry]   {activity.Code}: none due (budget remaining + backoff elapsed).");
+                Log.Info("[retry]   {ActivityCode}: none due (budget remaining + backoff elapsed).", activity.Code);
                 continue;
             }
 
-            Console.WriteLine($"[retry]   {activity.Code}: {records.Count} record(s) due for retry...");
+            Log.Info("[retry]   {ActivityCode}: {Count} record(s) due for retry...", activity.Code, records.Count);
             foreach (var rec in records)
             {
                 attempted++;
@@ -106,7 +112,7 @@ public sealed class RetryService
             Remarks = $"CBS fetch retry succeeded on attempt {rec.RetryCount + 1}",
             AttemptedAt = DateTime.UtcNow,
         }, ct);
-        Console.WriteLine($"[retry]   {rec.CustomerId}: CBS fetch re-attempted and succeeded -> Pending");
+        Log.Info("[retry]   {CustomerId}: CBS fetch re-attempted and succeeded -> Pending", rec.CustomerId);
         return new RetryOutcome(true);
     }
 

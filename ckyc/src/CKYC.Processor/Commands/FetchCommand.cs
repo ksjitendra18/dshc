@@ -1,5 +1,6 @@
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -12,6 +13,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class FetchCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "fetch";
     public string Usage => "CKYCProcessor.exe fetch cust [--file custid.json] [--date yyyy-MM-dd] [--count N]";
 
@@ -24,28 +27,28 @@ public sealed class FetchCommand : ICommand
         if (file is not null)
         {
             ids = DailyCustomerIdProvider.ReadCustomerIdsFile(file);
-            Console.WriteLine($"[fetch] Reading {ids.Count} customer id(s) from '{Path.GetFullPath(file)}'");
+            Log.Info("[fetch] Reading {Count} customer id(s) from '{Path}'", ids.Count, Path.GetFullPath(file));
         }
         else if (args.Any(a => string.Equals(a, "custid", StringComparison.OrdinalIgnoreCase)))
         {
             var custFile = ResolveCustIdFile();
             if (custFile is null)
             {
-                Console.Error.WriteLine("[fetch] 'custid' requested but no custid.json was found (looked in the current directory and the app directory).");
+                Log.Error("[fetch] 'custid' requested but no custid.json was found (looked in the current directory and the app directory).");
                 return 1;
             }
             ids = DailyCustomerIdProvider.ReadCustomerIdsFile(custFile);
-            Console.WriteLine($"[fetch] Reading {ids.Count} customer id(s) from '{custFile}'");
+            Log.Info("[fetch] Reading {Count} customer id(s) from '{Path}'", ids.Count, custFile);
         }
         else
         {
             ids = ctx.CustomerIds.GetIds(date);
-            Console.WriteLine($"[fetch] Source customer ids for {date}: {ids.Count}");
+            Log.Info("[fetch] Source customer ids for {Date}: {Count}", date, ids.Count);
         }
 
         if (ids.Count == 0)
         {
-            Console.WriteLine("[fetch] No customer ids found.");
+            Log.Warn("[fetch] No customer ids found.");
             return 1;
         }
 
@@ -58,8 +61,8 @@ public sealed class FetchCommand : ICommand
 
         var result = await ctx.Master.UpsertDailyAsync(ok, date, ct);
 
-        Console.WriteLine($"[fetch] Inserted={result.Inserted}  Skipped={result.Skipped}  Total={result.Total}  CbsFailed={failed.Count}");
-        Console.WriteLine("[fetch] Master table rows now in Pending state -> run `store` to enrich from the CRM.");
+        Log.Info("[fetch] Inserted={Inserted}  Skipped={Skipped}  Total={Total}  CbsFailed={CbsFailed}", result.Inserted, result.Skipped, result.Total, failed.Count);
+        Log.Info("[fetch] Master table rows now in Pending state -> run `store` to enrich from the CRM.");
 
         return failed.Count > 0 ? 1 : 0;
     }
@@ -113,8 +116,10 @@ public sealed class FetchCommand : ICommand
             NextRetryAt = nextRetryAt,
         }, ct);
 
-        Console.WriteLine($"[fetch] [{customerId}] CBS fetch FAILED (retry {attempt})" +
-                          (exhausted ? " -> flagged for reconciliation" : $" -> next retry {nextRetryAt:u}"));
+        if (exhausted)
+            Log.Warn("[fetch] [{CustomerId}] CBS fetch FAILED (retry {Attempt}) -> flagged for reconciliation", customerId, attempt);
+        else
+            Log.Warn("[fetch] [{CustomerId}] CBS fetch FAILED (retry {Attempt}) -> next retry {NextRetryAt:u}", customerId, attempt, nextRetryAt);
     }
 
     private static string? ResolveCustIdFile()

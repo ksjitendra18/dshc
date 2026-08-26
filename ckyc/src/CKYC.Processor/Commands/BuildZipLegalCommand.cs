@@ -1,5 +1,6 @@
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -11,6 +12,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class BuildZipLegalCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "build-zip-legal";
     public string Usage => "CKYCProcessor.exe build-zip-legal [--limit N]";
 
@@ -21,21 +24,22 @@ public sealed class BuildZipLegalCommand : ICommand
         var saved = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Saved, limit, "L", ct);
         if (saved.Count == 0)
         {
-            Console.WriteLine("[build-zip-legal] No Saved legal-entity records to batch. Run `insert-legal` first.");
+            Log.Info("[build-zip-legal] No Saved legal-entity records to batch. Run `insert-legal` first.");
             return 0;
         }
 
         var customerIds = saved.Select(r => r.CustomerId).ToList();
         var entities = await ctx.LegalEntities.GetByCustomerIdsAsync(customerIds, ct);
+        // O(n) lookup instead of an O(n²) FirstOrDefault scan per customer id.
+        var byCustomerId = entities.ToDictionary(e => e.CustomerId, StringComparer.Ordinal);
         var ordered = customerIds
-            .Select(id => entities.FirstOrDefault(e => e.CustomerId == id))
-            .Where(e => e is not null)
-            .Cast<Core.Domain.LegalEntity>()
+            .Where(byCustomerId.ContainsKey)
+            .Select(id => byCustomerId[id])
             .ToList();
 
         if (ordered.Count == 0)
         {
-            Console.WriteLine("[build-zip-legal] No stored legal-entity records matched the saved master records.");
+            Log.Info("[build-zip-legal] No stored legal-entity records matched the saved master records.");
             return 0;
         }
 
@@ -79,26 +83,26 @@ public sealed class BuildZipLegalCommand : ICommand
                     Remarks = string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}")),
                 }, ct);
 
-        Console.WriteLine($"[build-zip-legal] Batch '{batch.BatchKey}' generated with {batch.RecordCount} legal entity record(s).");
-        Console.WriteLine($"[build-zip-legal]   Upload file : {batch.UploadFilePath}");
-        Console.WriteLine($"[build-zip-legal]   Zip archive : {batch.ZipPath}");
+        Log.Info("[build-zip-legal] Batch '{BatchKey}' generated with {RecordCount} legal entity record(s).", batch.BatchKey, batch.RecordCount);
+        Log.Info("[build-zip-legal]   Upload file : {UploadFilePath}", batch.UploadFilePath);
+        Log.Info("[build-zip-legal]   Zip archive : {ZipPath}", batch.ZipPath);
 
         if (batch.SkippedCount > 0)
         {
-            Console.WriteLine($"[build-zip-legal]   Skipped     : {batch.SkippedCount} record(s) failed validation:");
+            Log.Warn("[build-zip-legal]   Skipped     : {SkippedCount} record(s) failed validation:", batch.SkippedCount);
             foreach (var s in batch.Skipped!)
             {
-                Console.WriteLine($"    ! {s.CustomerId} ({s.CustomerName})");
+                Log.Warn("[build-zip-legal]     ! {CustomerId} ({CustomerName})", s.CustomerId, s.CustomerName);
                 foreach (var e in s.Errors)
-                    Console.WriteLine($"        - [{e.RecordType}/{e.FieldName}] {e.ErrorDescription}");
+                    Log.Warn("[build-zip-legal]         - [{RecordType}/{FieldName}] {ErrorDescription}", e.RecordType, e.FieldName, e.ErrorDescription);
             }
         }
         else
         {
-            Console.WriteLine("[build-zip-legal]   Skipped     : none");
+            Log.Info("[build-zip-legal]   Skipped     : none");
         }
 
-        Console.WriteLine("[build-zip-legal] Run `fvu` to submit this batch to the File Validation Utility.");
+        Log.Info("[build-zip-legal] Run `fvu` to submit this batch to the File Validation Utility.");
         return batch.SkippedCount > 0 ? 1 : 0;
     }
 

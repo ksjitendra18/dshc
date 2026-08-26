@@ -1,5 +1,6 @@
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -15,6 +16,7 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class StoreService
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private readonly AppContext _ctx;
 
     public StoreService(AppContext ctx) => _ctx = ctx;
@@ -57,7 +59,7 @@ public sealed class StoreService
                 await _ctx.Master.UpdateStatusAsync(record.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
                 await LogAttemptAsync(record, ActivityTypeCodes.Store, MasterRecordStatus.Saved, true, null, save.Summary, ct);
                 success++;
-                Console.WriteLine($"[store] [{record.CustomerId}] saved: {save.Summary}");
+                Log.Info("[store] [{CustomerId}] saved: {Summary}", record.CustomerId, save.Summary);
             }
             catch (Exception ex)
             {
@@ -118,8 +120,12 @@ public sealed class StoreService
             $"retry {attempt}{(exhausted ? " (budget exhausted -> reconcile)" : "")}", ct,
             activity?.Id, nextRetryAt);
 
-        Console.WriteLine($"[store] [{record.CustomerId}] FAILED (retry {attempt}) [{activityCode}]: {error}" +
-                          (exhausted ? " -> flagged for reconciliation" : $" -> next retry {nextRetryAt:u}"));
+        if (exhausted)
+            Log.Warn("[store] [{CustomerId}] FAILED (retry {Attempt}) [{ActivityCode}]: {Error} -> flagged for reconciliation",
+                record.CustomerId, attempt, activityCode, error);
+        else
+            Log.Warn("[store] [{CustomerId}] FAILED (retry {Attempt}) [{ActivityCode}]: {Error} -> next retry {NextRetryAt:u}",
+                record.CustomerId, attempt, activityCode, error, nextRetryAt);
     }
 
     private Task<int> LogAttemptAsync(MasterRecord record, string stage, MasterRecordStatus status, bool success,

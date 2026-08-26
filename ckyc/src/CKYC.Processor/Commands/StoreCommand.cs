@@ -1,10 +1,13 @@
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
 /// <summary>Step 3 — enrich Pending master records from the CRM and save individual details.</summary>
 public sealed class StoreCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "store";
     public string Usage => "CKYCProcessor.exe store [--limit N]";
 
@@ -14,14 +17,14 @@ public sealed class StoreCommand : ICommand
         var pending = await ctx.Master.GetByStatusAsync(MasterRecordStatus.Pending, limit, ct: ct);
         if (pending.Count == 0)
         {
-            Console.WriteLine("[store] No Pending records to process.");
+            Log.Info("[store] No Pending records to process.");
             return 0;
         }
 
-        Console.WriteLine($"[store] Processing {pending.Count} pending master record(s) through the CRM...");
+        Log.Info("[store] Processing {Count} pending master record(s) through the CRM...", pending.Count);
         var service = new StoreService(ctx);
         var result = await service.ProcessAsync(pending, ct);
-        Console.WriteLine($"[store] Done: Succeeded={result.Succeeded}  Failed={result.Failed}  Total={result.Total}");
+        Log.Info("[store] Done: Succeeded={Succeeded}  Failed={Failed}  Total={Total}", result.Succeeded, result.Failed, result.Total);
         return result.Failed > 0 ? 1 : 0;
     }
 

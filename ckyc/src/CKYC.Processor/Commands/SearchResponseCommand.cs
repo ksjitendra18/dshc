@@ -1,8 +1,12 @@
+using NLog;
+
 namespace CKYC.Processor.Commands;
 
 /// <summary>Imports CKYCR SRC response files (.SRC.RESm or a ZIP containing one).</summary>
 public sealed class SearchResponseCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "search-response";
     public string Usage => "CKYCProcessor.exe search-response [--path runtime\\search\\response]";
 
@@ -13,7 +17,7 @@ public sealed class SearchResponseCommand : ICommand
         var files = ResolveFiles(fullPath);
         if (files.Count == 0)
         {
-            Console.WriteLine($"[search-response] No .SRC.RES response files found in {fullPath}");
+            Log.Warn("[search-response] No .SRC.RES response files found in {Path}", fullPath);
             return 0;
         }
 
@@ -27,13 +31,13 @@ public sealed class SearchResponseCommand : ICommand
                 {
                     var result = await ctx.Search.ImportResponseAsync(response, ct);
                     var label = result.AlreadyImported ? "already imported" : $"stored={result.Inserted} matched={result.MatchedRequests}";
-                    Console.WriteLine($"[search-response] {response.Header.ResponseFileName}: {label}");
+                    Log.Info("[search-response] {ResponseFile}: {Label}", response.Header.ResponseFileName, label);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 failed++;
-                Console.Error.WriteLine($"[search-response] {Path.GetFileName(file)}: {ex.Message}");
+                Log.Error(ex, "[search-response] {File}: {Message}", Path.GetFileName(file), ex.Message);
             }
         }
         return failed == 0 ? 0 : 1;

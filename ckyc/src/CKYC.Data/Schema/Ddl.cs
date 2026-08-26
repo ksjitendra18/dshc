@@ -781,6 +781,21 @@ public static class Ddl
         "CREATE INDEX IF NOT EXISTS ix_le_record50_customer ON legal_entity_record_50(CustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record60_customer ON legal_entity_record_60(CustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record70_customer ON legal_entity_record_70(CustomerId)",
+
+        // ---- Indexes for hot query shapes that previously scanned. Non-unique (the schema
+        //      deliberately avoids UNIQUE/CHECK/FK constraints), so existing data is never
+        //      rejected — these only speed reads. Child-table MasterRecordId indexes serve the
+        //      per-record load/delete path in the record repositories. ----
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record20_master ON kyc_record_20(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record30_master ON kyc_record_30(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record40_master ON kyc_record_40(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record50_master ON kyc_record_50(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record60_master ON kyc_record_60(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_kyc_record70_master ON kyc_record_70(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_master_status_id ON master_record(Status, Id)",
+        "CREATE INDEX IF NOT EXISTS ix_master_retry_picker ON master_record(Status, RetryCount, LastActivity, NextRetryAt)",
+        "CREATE INDEX IF NOT EXISTS ix_batch_key ON batch(BatchKey)",
+        "CREATE INDEX IF NOT EXISTS ix_fvu_run_key ON fvu_run(BatchKey)",
         """
         INSERT INTO master_record_batch (MasterRecordId, CustomerId, BatchFile, Record20LineNumber, BatchedAt)
         SELECT m.Id, m.CustomerId, m.BatchFile, m.BatchRecordLine, COALESCE(m.BatchedAt,m.UpdatedAt,m.CreatedAt)

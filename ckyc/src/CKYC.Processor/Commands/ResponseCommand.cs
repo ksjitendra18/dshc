@@ -2,6 +2,7 @@ using System.Text;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
 using CKYC.Files;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -19,6 +20,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class ResponseCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "response";
     public string Usage => "CKYCProcessor.exe response read [--batch <key>] [--dir <folder>] [--file <path>]";
 
@@ -27,26 +30,26 @@ public sealed class ResponseCommand : ICommand
         var sub = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         if (sub is not null && !string.Equals(sub, "read", StringComparison.OrdinalIgnoreCase))
         {
-            Console.Error.WriteLine($"[response] Unknown sub-command '{sub}'. Use: response read [...]");
+            Log.Error("[response] Unknown sub-command '{Sub}'. Use: response read [...]", sub);
             return 1;
         }
 
         var batch = await ResolveBatchAsync(ctx, args, ct);
         if (batch is null)
         {
-            Console.WriteLine("[response] No batch available. Run `build-zip` first.");
+            Log.Warn("[response] No batch available. Run `build-zip` first.");
             return 1;
         }
 
         var files = ResolveResponseFiles(ctx, batch, args);
         if (files.Count == 0)
         {
-            Console.WriteLine($"[response] No response (.RES) files found for batch '{batch.BatchKey}' " +
-                              $"(looked in '{ResolveDir(ctx, batch, args)}'). Run the FVU to process the batch first.");
+            Log.Warn("[response] No response (.RES) files found for batch '{BatchKey}' (looked in '{Dir}'). Run the FVU to process the batch first.",
+                batch.BatchKey, ResolveDir(ctx, batch, args));
             return 1;
         }
 
-        Console.WriteLine($"[response] Reading {files.Count} response file(s) for batch '{batch.BatchKey}' (upload: {batch.UploadFileName})...");
+        Log.Info("[response] Reading {Count} response file(s) for batch '{BatchKey}' (upload: {UploadFileName})...", files.Count, batch.BatchKey, batch.UploadFileName);
 
         var processedFiles = 0;
         var alreadyImported = 0;
@@ -68,14 +71,13 @@ public sealed class ResponseCommand : ICommand
                 if (await ctx.Master.HasUploadResponseFileAsync(import.SourceHash, name, ct))
                 {
                     alreadyImported++;
-                    Console.WriteLine($"[response]   {name}: already imported");
+                    Log.Info("[response]   {Name}: already imported", name);
                     continue;
                 }
                 processedFiles++;
 
-                Console.WriteLine($"[response]   {name} (resp #{parsed.ResponseFileNumber})" +
-                                  $" header: total={hdr?.TotalRecords} processed={hdr?.TotalProcessed} " +
-                                  $"pending={hdr?.UnderProcessing} failed={hdr?.Failed} ts={hdr?.ResponseTimestamp}");
+                Log.Info("[response]   {Name} (resp #{ResponseFileNumber}) header: total={TotalRecords} processed={TotalProcessed} pending={UnderProcessing} failed={Failed} ts={ResponseTimestamp}",
+                    name, parsed.ResponseFileNumber, hdr?.TotalRecords, hdr?.TotalProcessed, hdr?.UnderProcessing, hdr?.Failed, hdr?.ResponseTimestamp);
 
                 foreach (var detail in parsed.Details)
                 {
@@ -84,7 +86,8 @@ public sealed class ResponseCommand : ICommand
                 if (master is null)
                 {
                     unmatched++;
-                    Console.WriteLine($"[response]     ! detail line {detail.LineNumber} -> input line {detail.InputRecordLineNumber} (status {detail.RecordStatus}) no matching master record; skipped");
+                    Log.Warn("[response]     ! detail line {LineNumber} -> input line {InputRecordLineNumber} (status {Status}) no matching master record; skipped",
+                        detail.LineNumber, detail.InputRecordLineNumber, detail.RecordStatus);
                     continue;
                 }
 
@@ -129,14 +132,14 @@ public sealed class ResponseCommand : ICommand
                 // record was rejected; a confirmed match (01) or no-match (02) mean reconciled.
                 if (!isCurrentBatch)
                 {
-                    Console.WriteLine($"[response]     {master.CustomerId} historical response stored; current batch is {master.BatchFile}");
+                    Log.Info("[response]     {CustomerId} historical response stored; current batch is {BatchFile}", master.CustomerId, master.BatchFile);
                 }
                 else if (IsRejected(detail.RecordStatus, detail.RejectionRemark))
                 {
                     await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Rejected,
                         $"Rejected by CERSAI: {detail.RejectionRemark}", detail.RejectionRemark, ct);
                     rejected++;
-                    Console.WriteLine($"[response]     {master.CustomerId} REJECTED: {detail.RejectionRemark}");
+                    Log.Warn("[response]     {CustomerId} REJECTED: {RejectionRemark}", master.CustomerId, detail.RejectionRemark);
                 }
                 else if (detail.RecordStatus is "01" or "02")
                 {
@@ -144,12 +147,12 @@ public sealed class ResponseCommand : ICommand
                         $"Response read - status {detail.RecordStatus} (ack {detail.AckNumber})",
                         null, ct);
                     reconciled++;
-                    Console.WriteLine($"[response]     {master.CustomerId} reconciled status={detail.RecordStatus} " +
-                                      $"ack={detail.AckNumber} ref={detail.CkycReferenceNumber} ckycNo={detail.CkycNumber}");
+                    Log.Info("[response]     {CustomerId} reconciled status={Status} ack={AckNumber} ref={CkycReferenceNumber} ckycNo={CkycNumber}",
+                        master.CustomerId, detail.RecordStatus, detail.AckNumber, detail.CkycReferenceNumber, detail.CkycNumber);
                 }
                 else
                 {
-                    Console.WriteLine($"[response]     {master.CustomerId} recorded status={detail.RecordStatus} ack={detail.AckNumber}");
+                    Log.Info("[response]     {CustomerId} recorded status={Status} ack={AckNumber}", master.CustomerId, detail.RecordStatus, detail.AckNumber);
                 }
                 }
 
@@ -171,8 +174,8 @@ public sealed class ResponseCommand : ICommand
             }
         }
 
-        Console.WriteLine($"[response] Done: files={processedFiles} already-imported={alreadyImported} details={totalDetails} " +
-                          $"matched={matched} unmatched={unmatched} reconciled={reconciled} rejected={rejected}");
+        Log.Info("[response] Done: files={ProcessedFiles} already-imported={AlreadyImported} details={TotalDetails} matched={Matched} unmatched={Unmatched} reconciled={Reconciled} rejected={Rejected}",
+            processedFiles, alreadyImported, totalDetails, matched, unmatched, reconciled, rejected);
         return alreadyImported > 0 || (processedFiles > 0 && unmatched == 0) ? 0 : 1;
     }
 

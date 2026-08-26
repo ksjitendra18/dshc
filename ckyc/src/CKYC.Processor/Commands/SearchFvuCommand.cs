@@ -1,10 +1,13 @@
 using CKYC.Core.Models;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
 /// <summary>Stage three: validate the latest generated SRC through the CKYCR FVU.</summary>
 public sealed class SearchFvuCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "search-fvu";
     public string Usage => "CKYCProcessor.exe search-fvu [--file IRA000337_IN9797_DDMMYYYY_nnnnn.SRC]";
 
@@ -13,20 +16,20 @@ public sealed class SearchFvuCommand : ICommand
         var batch = await ctx.Search.GetGeneratedBatchAsync(Option(args, "--file"), ct);
         if (batch is null)
         {
-            Console.Error.WriteLine("[search-fvu] No generated SRC file is awaiting validation. Run `search-process` first.");
+            Log.Error("[search-fvu] No generated SRC file is awaiting validation. Run `search-process` first.");
             return 1;
         }
         if (!File.Exists(batch.FilePath))
         {
             const string message = "Generated SRC file is missing from its recorded location.";
             await ctx.Search.RecordFvuAsync(batch.Id, false, null, null, message, ct);
-            Console.Error.WriteLine($"[search-fvu] {message} {batch.FilePath}");
+            Log.Error("[search-fvu] {Message} {FilePath}", message, batch.FilePath);
             return 1;
         }
 
         var generated = new GeneratedBatch(Path.GetFileNameWithoutExtension(batch.FileName), batch.FileName,
             batch.FilePath, null, batch.RecordCount, DateTime.UtcNow);
-        Console.WriteLine($"[search-fvu] Validating {batch.FileName} through FVU...");
+        Log.Info("[search-fvu] Validating {FileName} through FVU...", batch.FileName);
         var result = await ctx.Fvu.RunAsync(generated, ct);
         await ctx.Journal.LogFvuRunAsync(result, ct);
 
@@ -60,13 +63,13 @@ public sealed class SearchFvuCommand : ICommand
 
     private static void Print(FvuRunResult result, string? finalZip, bool passed, string? error)
     {
-        Console.WriteLine($"[search-fvu] Executed={result.Executed} ExitCode={result.ExitCode} Passed={passed}");
-        if (result.Summary is { } summary) Console.WriteLine($"[search-fvu] files={summary.TotalFiles} success={summary.Success} failed={summary.Failed}");
-        if (finalZip is not null) Console.WriteLine($"[search-fvu] SRC ZIP: {finalZip}");
-        if (result.Hash is not null) Console.WriteLine($"[search-fvu] Hash: {result.Hash}");
-        if (error is not null) Console.Error.WriteLine($"[search-fvu] Error: {error}");
+        Log.Info("[search-fvu] Executed={Executed} ExitCode={ExitCode} Passed={Passed}", result.Executed, result.ExitCode, passed);
+        if (result.Summary is { } summary) Log.Info("[search-fvu] files={TotalFiles} success={Success} failed={Failed}", summary.TotalFiles, summary.Success, summary.Failed);
+        if (finalZip is not null) Log.Info("[search-fvu] SRC ZIP: {FinalZip}", finalZip);
+        if (result.Hash is not null) Log.Info("[search-fvu] Hash: {Hash}", result.Hash);
+        if (error is not null) Log.Error("[search-fvu] Error: {Error}", error);
         foreach (var issue in result.ValidationErrors ?? Array.Empty<ValidationError>())
-            Console.Error.WriteLine($"[search-fvu] {issue.LineNumber} {issue.FieldName} [{issue.ErrorCode}] {issue.ErrorDescription}");
+            Log.Error("[search-fvu] {LineNumber} {FieldName} [{ErrorCode}] {ErrorDescription}", issue.LineNumber, issue.FieldName, issue.ErrorCode, issue.ErrorDescription);
     }
 
     private static string? Option(string[] args, string name)

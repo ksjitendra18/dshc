@@ -28,6 +28,40 @@ Top findings, in priority order:
 | 9 | Full-file `Split` + whole-file reads for response parsing | `CkycResponseParser` | Memory spikes on large `.RES` files |
 | 10 | Whole `Batched` status table loaded, then filtered in memory | `FvuCommand.MarkRecordsAsync` | Unbounded read per FVU run |
 
+> **Update (2026-08-25):** items **4 (SQLite tuning)**, **3 (full-table dedup)**, **6 (O(N²))**,
+> the **missing indexes (5)**, and **7 (attempt COUNT round-trip)** have been implemented on
+> branch `performance`. See §1.1 below for status, and note that the report's UNIQUE-index
+> recommendations were *deliberately* skipped to respect the schema's "no constraints" spec.
+
+---
+
+## 1.1 Implementation status (2026-08-25)
+
+| Finding | Status | What was done |
+|---------|--------|---------------|
+| **4 — SQLite tuning** | ✅ Done | `SqliteDatabase.Create()` applies `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size=-20000`, `temp_store=MEMORY` on every opened connection. `src/CKYC.Data/SqliteDatabase.cs`. |
+| **3 — `UpsertDailyAsync`** | ✅ Done | Replaced whole-table `HashSet` + N autocommit inserts with one prepared command in **one transaction** via `INSERT ... SELECT ... WHERE NOT EXISTS`. `src/CKYC.Data/MasterRepository.cs`. |
+| **7 — attempt numbering** | ✅ Done | Removed `NextAttemptNumberAsync` (COUNT round-trip); attempt number computed in the INSERT via `SELECT COUNT(*)+1`. `src/CKYC.Data/MasterRepository.cs`. |
+| **6 — O(N²) ordering** | ✅ Done | `FirstOrDefault`-per-id → `Dictionary` lookup in `BuildZipCommand` and `BuildZipLegalCommand`. |
+| **5 — missing indexes** | ✅ Done | Non-unique `CREATE INDEX IF NOT EXISTS`: all `kyc_record_*(MasterRecordId)`, `master_record(Status,Id)`, retry-picker `(Status,RetryCount,LastActivity,NextRetryAt)`, `batch(BatchKey)`, `fvu_run(BatchKey)`. `src/CKYC.Data/Schema/Ddl.cs`. |
+| **1 — round-trips / N+1** | ⏳ Not done | Bigger refactor (command-scoped transactions + batch queries); deferred. |
+| **2 — N+1 + duplicate record-40 read** | ⏳ Not done | Touches `IndividualRepository`; deferred. |
+| **8 — per-record console I/O** | ⏳ Not done | Logging-throttle; deferred. |
+| **9 — full-file `Split` parsing** | ⏳ Not done | Streaming parsers; deferred (also F1/F2 in the newer report). |
+| **10 — whole `Batched` load** | ⏳ Not done | `FvuCommand`; deferred. |
+
+**Why the UNIQUE-index / `INSERT OR IGNORE` / `ON CONFLICT` fixes were skipped:** the schema
+(`Ddl.cs` header) is deliberately constraint-free — *"length validation yes, other validation
+no"* — so adding UNIQUE indexes could fail on existing data and violates the documented design.
+Behavior-preserving equivalents were used instead (single transaction / indexed `NOT EXISTS` /
+subquery attempt numbering).
+
+**Validation:** `dotnet build` 0 warnings/0 errors; `CKYC.SpecChecks` passed; `fetch` runs
+idempotently (5 → 0 inserted on rerun); attempt numbering increments correctly (retry 1 → retry 2).
+
+**Estimated speedup:** ≈ **3–8× on the SQLite-portion of write-heavy stages** at the batch cap
+(details in `performance_report.md` §4.1).
+
 ---
 
 ## 2. Workload profile and scale envelope
@@ -253,28 +287,30 @@ dotnet-counters monitor --process-id <pid>
 
 Priority = impact / effort. **P0** fixes the round-trip and scan explosion; **P1** removes structural costs; **P2** is polish.
 
+Updated 2026-08-25: ✅ done · ⏳ not done.
+
 ### P0 — do these first
-1. **SQLite pragmas + WAL** — `SqliteDatabase`: set `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size`, `mmap_size` at connection open (config-driven). *(Effort: tiny; impact: highest — the default `synchronous=FULL` + DELETE journal is the largest single multiplier on every write.)*
-2. **Command-scoped transactions + statement reuse** — one connection + one transaction per CLI stage (`store`, `response read`, `build-zip`, `fetch`), prepare statements once, reuse the transaction for all inserts/updates, commit at the end. *(Effort: medium — touches repository signatures to accept an ambient transaction/connection; impact: 10–50× on write stages.)*
-3. **Kill the N+1 and duplicate read in `GetByCustomerIdsAsync`** — 5 batch queries (one per child table) + in-memory grouping; delete the double record-40 read. *(Effort: medium; impact: 6N → 5 queries.)*
-4. **Make `UpsertDailyAsync` single-transaction and prepared** — no in-memory full-table dedup; `WHERE NOT EXISTS`/`INSERT OR IGNORE` (decide consciously on the no-UNIQUE philosophy) and reuse one command with parameter resets. *(Effort: small.)*
-5. **`NextAttemptNumberAsync` → single INSERT with `SELECT COUNT(*)+1` (or derive from master.RetryCount)** + optional `(MasterRecordId, Stage, Attempt)` unique index; run inside the ambient transaction. *(Effort: small; also fixes the race.)*
+1. ✅ **SQLite pragmas + WAL** — Applied `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size`, `temp_store=MEMORY` in `SqliteDatabase.Create()`. (`mmap_size` not set — deferred.)
+2. ⏳ **Command-scoped transactions + statement reuse** — Bigger signature refactor; deferred.
+3. ⏳ **Kill the N+1 and duplicate read in `GetByCustomerIdsAsync`** — Touches `IndividualRepository`; deferred.
+4. ✅ **Make `UpsertDailyAsync` single-transaction and prepared** — Done via `INSERT ... SELECT ... WHERE NOT EXISTS` in one transaction (no UNIQUE index, per the no-constraints spec).
+5. ✅ **`NextAttemptNumberAsync` → single INSERT with `SELECT COUNT(*)+1`** — Done (no unique index added; subquery computes the number atomically). Removed the dead method.
 
 ### P1 — structural
-6. **Indexes** for `kyc_record_20(CustomerId)`, all `kyc_record_*(MasterRecordId)`, `batch(BatchKey)`, `fvu_run(BatchKey)`, composite `master_record(Status, RetryCount, LastActivity, NextRetryAt)` and `(Status, Id)`. *(Effort: small; verify with `EXPLAIN QUERY PLAN`.)*
-7. **`BuildZipCommand` O(N²) → `Dictionary` lookup.**
-8. **`FvuCommand` → query by batch file directly** (use `GetByBatchFileAsync`) instead of loading the entire `Batched` population and filtering in memory.
-9. **Cache `activity_type` / `status_master` in-memory** as frozen lookups at startup instead of per-record DB lookups.
-10. **`PRAGMA user_version` schema marker** to skip per-invocation DDL/migration probes.
-11. **Stream parsing**: `ReadLinesAsync` + per-line split in `CkycResponseParser` (and `SimulatedFvuRunner.InjectSimulatedHashes`); chunk dynamic `IN` lists at ~500.
-12. **Throttle per-record console output** (progress every N; verbose flag).
+6. ✅ **Indexes** — Added non-unique `CREATE INDEX IF NOT EXISTS` for the child `MasterRecordId` keys, `master_record(Status,Id)`, the retry-picker composite, `batch(BatchKey)`, `fvu_run(BatchKey)`.
+7. ✅ **`BuildZipCommand` O(N²) → `Dictionary` lookup** — Done in `BuildZipCommand` and `BuildZipLegalCommand`.
+8. ⏳ **`FvuCommand` → query by batch file directly** — Deferred.
+9. ⏳ **Cache `activity_type` / `status_master` in-memory** — Deferred.
+10. ⏳ **`PRAGMA user_version` schema marker** — Deferred.
+11. ⏳ **Stream parsing + chunk `IN` lists** — Deferred (F1/F2 in the newer report).
+12. ⏳ **Throttle per-record console output** — Deferred.
 
 ### P2 — polish
-13. Explicit column lists + cached `GetOrdinal` + invariant date parsing in the reader mappings; hoist duplicate `UtcNow` strings.
-14. `CompressionLevel.Fastest` for placeholder docs; pre-sized `StringBuilder` in the upload writer; stream the reconcile CSV.
-15. Reduce per-customer SHA-256 churn in `DummyCrmDataProvider` (one hash per customer).
-16. System.Text.Json source-generated contexts for `Individual`/settings; `FrozenDictionary` for the lookup caches.
-17. Sanity items only (no behavior change): dispose `SqliteDatabase` through `AppContext` (`using var app = ...`).
+13. ⏳ Explicit column lists + cached `GetOrdinal` + invariant date parsing in the reader mappings; hoist duplicate `UtcNow` strings.
+14. ⏳ `CompressionLevel.Fastest` for placeholder docs; pre-sized `StringBuilder`; stream the reconcile CSV.
+15. ⏳ Reduce per-customer SHA-256 churn in `DummyCrmDataProvider` (one hash per customer).
+16. ⏳ System.Text.Json source-generated contexts for `Individual`/settings; `FrozenDictionary` for the lookup caches.
+17. ⏳ Sanity items only (no behavior change): dispose `SqliteDatabase` through `AppContext` (`using var app = ...`).
 
 ### Explicitly *not* recommended
 - Parallelizing SQLite writes (writer serialization defeats it).

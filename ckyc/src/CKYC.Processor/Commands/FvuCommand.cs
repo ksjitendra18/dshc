@@ -1,11 +1,14 @@
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
 /// <summary>Step 5 — submit the generated batch to the FVU and capture the processed zip + hash.</summary>
 public sealed class FvuCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "fvu";
     public string Usage => "CKYCProcessor.exe fvu [--batch <key>]"; // default: last generated batch
 
@@ -14,11 +17,11 @@ public sealed class FvuCommand : ICommand
         var batch = await ResolveBatchAsync(ctx, args, ct);
         if (batch is null)
         {
-            Console.WriteLine("[fvu] No batch available. Run `build-zip` first.");
+            Log.Warn("[fvu] No batch available. Run `build-zip` first.");
             return 1;
         }
 
-        Console.WriteLine($"[fvu] Submitting batch '{batch.BatchKey}' ({batch.UploadFilePath}) to the FVU...");
+        Log.Info("[fvu] Submitting batch '{BatchKey}' ({UploadFilePath}) to the FVU...", batch.BatchKey, batch.UploadFilePath);
         var result = await ctx.Fvu.RunAsync(batch, ct);
 
         await ctx.Journal.LogFvuRunAsync(result, ct);
@@ -72,15 +75,16 @@ public sealed class FvuCommand : ICommand
 
     private static void Print(FvuRunResult result)
     {
-        Console.WriteLine($"[fvu] Executed={result.Executed}  ExitCode={result.ExitCode}  Passed={result.Passed}");
+        Log.Info("[fvu] Executed={Executed}  ExitCode={ExitCode}  Passed={Passed}", result.Executed, result.ExitCode, result.Passed);
         if (result.Summary is { } s)
-            Console.WriteLine($"[fvu]   files={s.TotalFiles} success={s.Success} failed={s.Failed} summaryPdf={s.SummaryPdf}");
-        Console.WriteLine($"[fvu]   output zIp  : {result.OutputZipPath}");
-        Console.WriteLine($"[fvu]   hash        : {result.Hash}");
+            Log.Info("[fvu]   files={TotalFiles} success={Success} failed={Failed} summaryPdf={SummaryPdf}", s.TotalFiles, s.Success, s.Failed, s.SummaryPdf);
+        Log.Info("[fvu]   output zIp  : {OutputZipPath}", result.OutputZipPath);
+        Log.Info("[fvu]   hash        : {Hash}", result.Hash);
         if (result.ErrorMessage is not null)
-            Console.WriteLine($"[fvu]   error       : {result.ErrorMessage}");
+            Log.Warn("[fvu]   error       : {ErrorMessage}", result.ErrorMessage);
         foreach (var e in result.ValidationErrors ?? Array.Empty<ValidationError>())
-            Console.WriteLine($"[fvu]     ! record={e.RecordType} line={e.LineNumber} field={e.FieldName} value={e.FieldValue} [{e.ErrorCode}] {e.ErrorDescription}");
+            Log.Warn("[fvu]     ! record={RecordType} line={LineNumber} field={FieldName} value={FieldValue} [{ErrorCode}] {ErrorDescription}",
+                e.RecordType, e.LineNumber, e.FieldName, e.FieldValue, e.ErrorCode, e.ErrorDescription);
     }
 
     private static string? Option(string[] args, string name)

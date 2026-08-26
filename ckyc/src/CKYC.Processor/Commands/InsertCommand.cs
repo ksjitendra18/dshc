@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -16,6 +17,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class InsertCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "insert";
     public string Usage => "CKYCProcessor.exe insert --file <customer.json>\n" +
                             "                      [--customer-id X --name \"First Last\" --dob DD-MM-YYYY --gender M/F --email e@x.com --mobile 98XXXXXXXX --pan ABCDE1234F]";
@@ -26,12 +29,12 @@ public sealed class InsertCommand : ICommand
         Normalize(individual);
         if (string.IsNullOrWhiteSpace(individual.CustomerId))
         {
-            Console.Error.WriteLine("[insert] A customer id is required (--customer-id or customerId in --file).");
+            Log.Error("[insert] A customer id is required (--customer-id or customerId in --file).");
             return 1;
         }
         if (!individual.Name.FirstName.Any(char.IsLetter))
         {
-            Console.Error.WriteLine("[insert] A name is required (--name \"First Last\" or name.firstName in --file).");
+            Log.Error("[insert] A name is required (--name \"First Last\" or name.firstName in --file).");
             return 1;
         }
 
@@ -43,7 +46,7 @@ public sealed class InsertCommand : ICommand
         var master = await ctx.Master.EnsureAsync(individual.CustomerId, businessDate, ct: ct);
         if (!string.Equals(master.ClientType, "I", StringComparison.OrdinalIgnoreCase))
         {
-            Console.Error.WriteLine($"[insert] Customer id '{individual.CustomerId}' already belongs to client type '{master.ClientType}' and cannot be stored as an individual.");
+            Log.Error("[insert] Customer id '{CustomerId}' already belongs to client type '{ClientType}' and cannot be stored as an individual.", individual.CustomerId, master.ClientType);
             return 1;
         }
 
@@ -53,15 +56,15 @@ public sealed class InsertCommand : ICommand
         var save = await ctx.Individuals.SaveAsync(individual, ct);
         if (!save.Success)
         {
-            Console.Error.WriteLine($"[insert] Save failed: {save.Error}");
+            Log.Error("[insert] Save failed: {Error}", save.Error);
             return 1;
         }
 
         await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
 
-        Console.WriteLine($"[insert] Created '{individual.CustomerId}' ({individual.Name.FirstName} {individual.Name.LastName})");
-        Console.WriteLine($"[insert]   {save.Summary}");
-        Console.WriteLine("[insert] Next: `build-zip` then `fvu` to validate and process.");
+        Log.Info("[insert] Created '{CustomerId}' ({FirstName} {LastName})", individual.CustomerId, individual.Name.FirstName, individual.Name.LastName);
+        Log.Info("[insert]   {Summary}", save.Summary);
+        Log.Info("[insert] Next: `build-zip` then `fvu` to validate and process.");
         return 0;
     }
 

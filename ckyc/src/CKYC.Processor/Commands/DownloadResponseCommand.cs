@@ -1,8 +1,12 @@
+using NLog;
+
 namespace CKYC.Processor.Commands;
 
 /// <summary>Imports CKYCR .DWN.RES ZIP snapshots, record lines and document inventory.</summary>
 public sealed class DownloadResponseCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "download-response";
     public string Usage => "CKYCProcessor.exe download-response --path <file-or-folder>";
 
@@ -11,7 +15,7 @@ public sealed class DownloadResponseCommand : ICommand
         var path = Option(args, "--path");
         if (string.IsNullOrWhiteSpace(path))
         {
-            Console.Error.WriteLine("[download-response] Pass --path <DWN.RES zip/file/folder>.");
+            Log.Error("[download-response] Pass --path <DWN.RES zip/file/folder>.");
             return 1;
         }
 
@@ -21,7 +25,7 @@ public sealed class DownloadResponseCommand : ICommand
             : [];
         if (files.Length == 0)
         {
-            Console.WriteLine($"[download-response] No .DWN.RES files found at {fullPath}");
+            Log.Warn("[download-response] No .DWN.RES files found at {Path}", fullPath);
             return 1;
         }
 
@@ -34,13 +38,13 @@ public sealed class DownloadResponseCommand : ICommand
                 {
                     var result = await ctx.Downloads.ImportAsync(response, ct);
                     var label = result.AlreadyImported ? "already imported" : $"lines={result.Lines} artifacts={result.Artifacts}";
-                    Console.WriteLine($"[download-response] {response.ResponseFileName}: {label}");
+                    Log.Info("[download-response] {ResponseFile}: {Label}", response.ResponseFileName, label);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 failures++;
-                Console.Error.WriteLine($"[download-response] {Path.GetFileName(file)}: {ex.Message}");
+                Log.Error(ex, "[download-response] {File}: {Message}", Path.GetFileName(file), ex.Message);
             }
         }
         return failures == 0 ? 0 : 1;

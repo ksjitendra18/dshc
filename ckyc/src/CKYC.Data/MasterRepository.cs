@@ -17,36 +17,39 @@ public sealed class MasterRepository : IMasterRepository
     {
         if (customerIds.Count == 0) return new FetchResult(0, 0, 0);
 
-        await using var conn = _db.Create();
-        await using var existsCmd = conn.CreateCommand();
-        existsCmd.CommandText = "SELECT CustomerId FROM master_record";
-        var existing = new HashSet<string>(StringComparer.Ordinal);
-        await using (var r = await existsCmd.ExecuteReaderAsync(ct))
-        {
-            while (await r.ReadAsync(ct)) existing.Add(r.GetString(0));
-        }
-
         var now = DateTime.UtcNow.ToString("o");
         var business = businessDate.ToString("yyyy-MM-dd");
-        int inserted = 0, skipped = 0;
+        await using var conn = _db.Create();
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        var localTx = (DbTransaction)tx;
+
+        // One prepared command, one transaction. The previous implementation loaded the whole
+        // table into a HashSet (O(table) on every run) and issued one autocommit INSERT per id.
+        // Here each row's existence is checked against the CustomerId index via NOT EXISTS, so
+        // the dedup is O(ids) and the inserts commit together (N fsyncs -> 1).
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = localTx;
+        cmd.CommandText = """
+            INSERT INTO master_record
+                (CustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
+            SELECT @id, @date, 0, @remarks, 0, @now, @now
+             WHERE NOT EXISTS (SELECT 1 FROM master_record WHERE CustomerId=@id)
+            """;
+        var pId = new Microsoft.Data.Sqlite.SqliteParameter("@id", DBNull.Value);
+        cmd.Parameters.Add(pId);
+        cmd.Parameters.Add(NewParam("@date", business));
+        cmd.Parameters.Add(NewParam("@remarks", $"Fetched on {businessDate:dd-MM-yyyy}"));
+        cmd.Parameters.Add(NewParam("@now", now));
+
+        int inserted = 0;
         foreach (var id in customerIds)
         {
-            if (existing.Contains(id)) { skipped++; continue; }
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO master_record
-                    (CustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
-                VALUES
-                    (@id, @date, 0, @remarks, 0, @now, @now)
-                """;
-            cmd.Parameters.Add(NewParam("@id", id));
-            cmd.Parameters.Add(NewParam("@date", business));
-            cmd.Parameters.Add(NewParam("@remarks", $"Fetched on {businessDate:dd-MM-yyyy}"));
-            cmd.Parameters.Add(NewParam("@now", now));
-            await cmd.ExecuteNonQueryAsync(ct);
-            inserted++;
+            pId.Value = id;
+            inserted += await cmd.ExecuteNonQueryAsync(ct);
         }
-        return new FetchResult(inserted, skipped, customerIds.Count);
+
+        await tx.CommitAsync(ct);
+        return new FetchResult(inserted, customerIds.Count - inserted, customerIds.Count);
     }
 
     public async Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default)
@@ -454,23 +457,26 @@ public sealed class MasterRepository : IMasterRepository
 
     public async Task<int> LogAttemptAsync(MasterRecordAttempt attempt, CancellationToken ct = default)
     {
-        var attemptNo = await NextAttemptNumberAsync(attempt.MasterRecordId, attempt.Stage, ct);
         var now = DateTime.UtcNow;
         var attemptedAt = attempt.AttemptedAt ?? now;
 
         await using var conn = _db.Create();
         await using var cmd = conn.CreateCommand();
+        // Compute the attempt number in the same statement instead of a separate COUNT-based
+        // round-trip. This removes a connection + a widening COUNT(*) per attempt and avoids
+        // the race where two concurrent attempts could observe the same count and both insert
+        // the same Attempt number.
         cmd.CommandText = """
             INSERT INTO master_record_attempt
                 (MasterRecordId, CustomerId, Stage, ActivityTypeId, Attempt, Status, Success, Error, Remarks, AttemptedAt, NextRetryAt, CreatedAt)
-            VALUES
-                (@mid, @sid, @stage, @atid, @attempt, @st, @ok, @err, @rm, @at, @next, @now)
+            SELECT @mid, @sid, @stage, @atid,
+                   (SELECT COUNT(*) + 1 FROM master_record_attempt WHERE MasterRecordId=@mid AND Stage=@stage),
+                   @st, @ok, @err, @rm, @at, @next, @now
             """;
         cmd.Parameters.Add(NewParam("@mid", attempt.MasterRecordId));
         cmd.Parameters.Add(NewParam("@sid", attempt.CustomerId));
         cmd.Parameters.Add(NewParam("@stage", attempt.Stage));
         cmd.Parameters.Add(NewParam("@atid", attempt.ActivityTypeId));
-        cmd.Parameters.Add(NewParam("@attempt", attemptNo));
         cmd.Parameters.Add(NewParam("@st", attempt.Status));
         cmd.Parameters.Add(NewParam("@ok", attempt.Success ? 1 : 0));
         cmd.Parameters.Add(NewParam("@err", attempt.Error));
@@ -739,16 +745,6 @@ public sealed class MasterRepository : IMasterRepository
         IsActive = ReadBool(r, "IsActive"),
         CreatedAt = ReadDate(r, "CreatedAt"),
     };
-
-    private async Task<int> NextAttemptNumberAsync(long masterRecordId, string stage, CancellationToken ct)
-    {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM master_record_attempt WHERE MasterRecordId=@m AND Stage=@s";
-        cmd.Parameters.Add(NewParam("@m", masterRecordId));
-        cmd.Parameters.Add(NewParam("@s", stage));
-        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) + 1;
-    }
 
     private async Task<IReadOnlyList<MasterRecord>> QueryAsync(string sql, Action<DbCommand> configure, CancellationToken ct)
     {

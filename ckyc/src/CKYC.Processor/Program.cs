@@ -1,5 +1,6 @@
 using System.Text;
 using CKYC.Processor;
+using NLog;
 using AppContext = CKYC.Processor.AppContext;
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,12 @@ using AppContext = CKYC.Processor.AppContext;
 
 Console.OutputEncoding = Encoding.UTF8;
 
+// NLog is configured from NLog.config (copied to the output dir). autoReload means edits to
+// the config are picked up without a restart. Register a shutdown hook so buffered logs flush.
+LogManager.Setup().LoadConfigurationFromFile("NLog.config", optional: false);
+var logger = LogManager.GetCurrentClassLogger();
+AppDomain.CurrentDomain.ProcessExit += (_, _) => LogManager.Shutdown();
+
 var settingsPath = ArgValue(args, "--settings");
 var settings = SettingsLoader.Load(settingsPath);
 var app = new AppContext(settings);
@@ -39,7 +46,7 @@ var commandName = args[0];
 var command = registry.Resolve(commandName);
 if (command is null)
 {
-    Console.Error.WriteLine($"Unknown command '{commandName}'.");
+    logger.Error("Unknown command '{Command}'", commandName);
     Console.Write(registry.Help());
     return 1;
 }
@@ -51,13 +58,13 @@ try
 }
 catch (OperationCanceledException)
 {
-    Console.Error.WriteLine("Cancelled.");
+    logger.Warn("Cancelled.");
     return 130;
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"ERROR: {ex.Message}");
-    if (settings.Simulation.SaveErrorsEnabled) Console.Error.WriteLine(ex.ToString());
+    logger.Error(ex, "Unhandled exception during command '{Command}'", commandName);
+    if (settings.Simulation.SaveErrorsEnabled) logger.Error(ex, "Full exception details");
     return 1;
 }
 

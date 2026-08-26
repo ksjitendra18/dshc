@@ -1,5 +1,6 @@
 using System.Text;
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -22,6 +23,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class ReconcileCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "reconcile";
     public string Usage => "CKYCProcessor.exe reconcile [--kind retry|cersai] [--out <path>] [--stakeholder <name>]";
 
@@ -38,7 +41,7 @@ public sealed class ReconcileCommand : ICommand
         var kind = Option(args, "--kind");
         if (kind is not null && kind is not ("retry" or "cersai"))
         {
-            Console.Error.WriteLine("[reconcile] --kind must be 'retry' or 'cersai'.");
+            Log.Error("[reconcile] --kind must be 'retry' or 'cersai'.");
             return 1;
         }
         var stakeholder = Option(args, "--stakeholder") ?? "Stakeholder";
@@ -47,7 +50,7 @@ public sealed class ReconcileCommand : ICommand
         var records = await ctx.Master.GetNeedsReconcileAsync(kind, limit, ct);
         if (records.Count == 0)
         {
-            Console.WriteLine($"[reconcile] No records need manual intervention (kind={kind ?? "all"}).");
+            Log.Info("[reconcile] No records need manual intervention (kind={Kind}).", kind ?? "all");
             return 0;
         }
 
@@ -74,16 +77,17 @@ public sealed class ReconcileCommand : ICommand
 
         await File.WriteAllTextAsync(path, lines.ToString(), new UTF8Encoding(false), ct);
 
-        Console.WriteLine($"[reconcile] {records.Count} record(s) need manual intervention -> {Path.GetFullPath(path)}");
-        Console.WriteLine($"[reconcile] Stakeholder: {stakeholder}");
+        Log.Warn("[reconcile] {Count} record(s) need manual intervention -> {Path}", records.Count, Path.GetFullPath(path));
+        Log.Info("[reconcile] Stakeholder: {Stakeholder}", stakeholder);
         foreach (var r in records)
         {
             var reason = r.NeedsReconcile
                 ? $"exhausted retries (last error: {r.LastError})"
                 : (r.Status == MasterRecordStatus.Rejected ? "rejected by CERSAI" : "failed at CERSAI");
-            Console.WriteLine($"  [{r.Id}] {r.CustomerId}  {r.Status.Label()}  retry={r.RetryCount}  reattempt={r.ReattemptCount}  {reason}");
+            Log.Warn("[reconcile]   [{RecordId}] {CustomerId}  {Status}  retry={RetryCount}  reattempt={ReattemptCount}  {Reason}",
+                r.Id, r.CustomerId, r.Status.Label(), r.RetryCount, r.ReattemptCount, reason);
             if (r.LastResponseRejectionRemark is not null)
-                Console.WriteLine($"        CERSAI remark: {r.LastResponseRejectionRemark}");
+                Log.Warn("[reconcile]         CERSAI remark: {RejectionRemark}", r.LastResponseRejectionRemark);
         }
         return 0;
     }

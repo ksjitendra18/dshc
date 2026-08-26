@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CKYC.Core.Domain;
 using CKYC.Core.Spec;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -17,6 +18,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class InsertLegalCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "insert-legal";
     public string Usage => "CKYCProcessor.exe insert-legal --file <entity.json>\n" +
                            "         [--customer-id X --name \"Acme Pvt Ltd\" --constitution D --date-inco DD-MM-YYYY --cin UXXXX --pan ABCDE1234F --email e@x.com --mobile 98XXXXXXXX]";
@@ -28,12 +31,12 @@ public sealed class InsertLegalCommand : ICommand
 
         if (string.IsNullOrWhiteSpace(legal.CustomerId))
         {
-            Console.Error.WriteLine("[insert-legal] A customer id is required (--customer-id or customerId in --file).");
+            Log.Error("[insert-legal] A customer id is required (--customer-id or customerId in --file).");
             return 1;
         }
         if (string.IsNullOrWhiteSpace(legal.EntityName))
         {
-            Console.Error.WriteLine("[insert-legal] An entity name is required (--name or name in --file).");
+            Log.Error("[insert-legal] An entity name is required (--name or name in --file).");
             return 1;
         }
 
@@ -43,9 +46,9 @@ public sealed class InsertLegalCommand : ICommand
         var validationErrors = LegalEntityRecordValidator.Validate(legal);
         if (validationErrors.Count > 0)
         {
-            Console.Error.WriteLine("[insert-legal] Legal entity failed create-format validation:");
+            Log.Error("[insert-legal] Legal entity failed create-format validation:");
             foreach (var error in validationErrors)
-                Console.Error.WriteLine($"  - [{error.RecordType}/{error.FieldName}] {error.ErrorDescription}");
+                Log.Error("[insert-legal]   - [{RecordType}/{FieldName}] {ErrorDescription}", error.RecordType, error.FieldName, error.ErrorDescription);
             return 1;
         }
 
@@ -53,7 +56,7 @@ public sealed class InsertLegalCommand : ICommand
         var master = await ctx.Master.EnsureAsync(legal.CustomerId, businessDate, "L", ct);
         if (!string.Equals(master.ClientType, "L", StringComparison.OrdinalIgnoreCase))
         {
-            Console.Error.WriteLine($"[insert-legal] Customer id '{legal.CustomerId}' already belongs to client type '{master.ClientType}' and cannot be stored as a legal entity.");
+            Log.Error("[insert-legal] Customer id '{CustomerId}' already belongs to client type '{ClientType}' and cannot be stored as a legal entity.", legal.CustomerId, master.ClientType);
             return 1;
         }
 
@@ -63,15 +66,15 @@ public sealed class InsertLegalCommand : ICommand
         var save = await ctx.LegalEntities.SaveAsync(legal, ct);
         if (!save.Success)
         {
-            Console.Error.WriteLine($"[insert-legal] Save failed: {save.Error}");
+            Log.Error("[insert-legal] Save failed: {Error}", save.Error);
             return 1;
         }
 
         await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
 
-        Console.WriteLine($"[insert-legal] Created '{legal.CustomerId}' ({legal.EntityName})");
-        Console.WriteLine($"[insert-legal]   {save.Summary}");
-        Console.WriteLine("[insert-legal] Next: `build-zip-legal` then `fvu` to validate and process.");
+        Log.Info("[insert-legal] Created '{CustomerId}' ({EntityName})", legal.CustomerId, legal.EntityName);
+        Log.Info("[insert-legal]   {Summary}", save.Summary);
+        Log.Info("[insert-legal] Next: `build-zip-legal` then `fvu` to validate and process.");
         return 0;
     }
 

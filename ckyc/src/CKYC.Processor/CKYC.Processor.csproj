@@ -5,6 +5,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="NLog" />
+    <None Include="NLog.config" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\CKYC.Core\CKYC.Core.csproj" />
     <ProjectReference Include="..\CKYC.Data\CKYC.Data.csproj" />
     <ProjectReference Include="..\CKYC.Crm\CKYC.Crm.csproj" />

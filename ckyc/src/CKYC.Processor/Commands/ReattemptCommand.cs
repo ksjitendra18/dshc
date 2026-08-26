@@ -1,4 +1,5 @@
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -18,6 +19,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class ReattemptCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "reattempt";
     public string Usage => "CKYCProcessor.exe reattempt --id <recordId> | --customer <customerId> [--reason \"...\"]";
 
@@ -26,13 +29,13 @@ public sealed class ReattemptCommand : ICommand
         var record = await ResolveRecordAsync(ctx, args, ct);
         if (record is null)
         {
-            Console.Error.WriteLine("[reattempt] Record not found. Pass --id <recordId> or --customer <customerId>.");
+            Log.Error("[reattempt] Record not found. Pass --id <recordId> or --customer <customerId>.");
             return 1;
         }
 
         if (record.Status is not (MasterRecordStatus.Rejected or MasterRecordStatus.Failed) && !record.IsRejected)
         {
-            Console.Error.WriteLine($"[reattempt] Record {record.CustomerId} is not in a re-pushable state (current status: {record.Status.Label()}).");
+            Log.Error("[reattempt] Record {CustomerId} is not in a re-pushable state (current status: {Status}).", record.CustomerId, record.Status.Label());
             return 1;
         }
 
@@ -60,12 +63,12 @@ public sealed class ReattemptCommand : ICommand
             AttemptedAt = now,
         }, ct);
 
-        Console.WriteLine($"[reattempt] Re-pushing {record.CustomerId} (record #{record.Id})");
-        Console.WriteLine($"[reattempt]   prior status={record.Status.Label()} reconStatus={record.ReconStatus} retryCount={record.RetryCount}");
+        Log.Info("[reattempt] Re-pushing {CustomerId} (record #{RecordId})", record.CustomerId, record.Id);
+        Log.Info("[reattempt]   prior status={Status} reconStatus={ReconStatus} retryCount={RetryCount}", record.Status.Label(), record.ReconStatus, record.RetryCount);
         if (record.LastResponseRejectionRemark is not null)
-            Console.WriteLine($"[reattempt]   prior rejection remark: {record.LastResponseRejectionRemark}");
-        Console.WriteLine($"[reattempt]   previous response snapshotted to master_record_reattempt; record reset to Saved.");
-        Console.WriteLine("[reattempt] Next: `build-zip` to re-batch, then `fvu` and `response read`.");
+            Log.Info("[reattempt]   prior rejection remark: {RejectionRemark}", record.LastResponseRejectionRemark);
+        Log.Info("[reattempt]   previous response snapshotted to master_record_reattempt; record reset to Saved.");
+        Log.Info("[reattempt] Next: `build-zip` to re-batch, then `fvu` and `response read`.");
         return 0;
     }
 

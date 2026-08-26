@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(dotnet:*)",
+      "Shell(cat custid.json 2>nul | head -20; echo \"---\"; wc -l custid.json 2>nul)",
+      "powershell",
+      "Shell(srcCKYC.ProcessorbinReleasenet10.0CKYC.Processor.exe:*)",
+      "Shell(sleep:*)",
+      "Shell(git:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

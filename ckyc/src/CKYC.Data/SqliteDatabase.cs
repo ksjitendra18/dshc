@@ -27,7 +27,37 @@ public sealed class SqliteDatabase : ICkycDatabase, IDisposable
     {
         var conn = new SqliteConnection(ConnectionString);
         conn.Open();
+        ApplyPragmas(conn);
         return conn;
+    }
+
+    /// <summary>
+    /// Tunes SQLite for a write-heavy batch pipeline. The default mode (DELETE journal +
+    /// <c>synchronous=FULL</c>) fsyncs on every committed transaction, which dominates the
+    /// cost of <c>store</c>/<c>fetch</c>/<c>build-zip</c>. Applying the PRAGMAs per opened
+    /// connection (rather than only in the connection string) ensures every pooled connection
+    /// gets them too.
+    /// </summary>
+    private static void ApplyPragmas(SqliteConnection conn)
+    {
+        // journal_mode=WAL lets readers proceed while the writer commits and reduces fsyncs.
+        // synchronous=NORMAL under WAL preserves durability for the application's crash-safety
+        // needs while avoiding the two flushes-per-commit of FULL.
+        // busy_timeout makes a writer/reader wait instead of surfacing SQLITE_BUSY immediately
+        // under the Cache=Shared / multi-connection profile.
+        ExecutePragma(conn, "journal_mode=WAL");
+        ExecutePragma(conn, "synchronous=NORMAL");
+        ExecutePragma(conn, "busy_timeout=5000");
+        // -20000 = ~20 MB cache; the pipeline reads/writes few, wide rows.
+        ExecutePragma(conn, "cache_size=-20000");
+        ExecutePragma(conn, "temp_store=MEMORY");
+    }
+
+    private static void ExecutePragma(SqliteConnection conn, string pragma)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA {pragma};";
+        cmd.ExecuteNonQuery();
     }
 
     public async Task InitializeSchemaAsync(CancellationToken ct = default)

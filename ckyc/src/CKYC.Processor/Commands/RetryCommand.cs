@@ -1,4 +1,5 @@
 using CKYC.Core.Domain;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
@@ -13,6 +14,8 @@ namespace CKYC.Processor.Commands;
 /// </summary>
 public sealed class RetryCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "retry";
     public string Usage => "CKYCProcessor.exe retry [--activity <code>] [--limit N]";
 
@@ -23,10 +26,10 @@ public sealed class RetryCommand : ICommand
 
         var result = await RetryService.RunAsync(ctx, activityCode, limit, ct);
 
-        Console.WriteLine($"[retry] Done: Attempted={result.Attempted}  Succeeded={result.Succeeded}  " +
-                          $"PermanentFailed={result.PermanentFailed}  Skipped/DueLater={result.Skipped}");
+        Log.Info("[retry] Done: Attempted={Attempted}  Succeeded={Succeeded}  PermanentFailed={PermanentFailed}  Skipped/DueLater={Skipped}",
+            result.Attempted, result.Succeeded, result.PermanentFailed, result.Skipped);
         if (result.PermanentFailed > 0)
-            Console.WriteLine("[retry] Some records exhausted their retry budget -> run `reconcile` for the manual-intervention report.");
+            Log.Warn("[retry] Some records exhausted their retry budget -> run `reconcile` for the manual-intervention report.");
         return result.PermanentFailed > 0 || result.Skipped > 0 ? 1 : 0;
     }
 

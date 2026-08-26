@@ -1,10 +1,13 @@
 using System.Globalization;
+using NLog;
 
 namespace CKYC.Processor.Commands;
 
 /// <summary>Stage two: atomically claim pending rows and generate one SRC file.</summary>
 public sealed class SearchProcessCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "search-process";
     public string Usage => "CKYCProcessor.exe search-process [--limit N] [--date yyyy-MM-dd]";
 
@@ -16,7 +19,7 @@ public sealed class SearchProcessCommand : ICommand
         var claim = await ctx.Search.ClaimAsync(limit, businessDate, ctx.Settings.Search.SequenceStart, timeout, ct);
         if (claim is null)
         {
-            Console.WriteLine("[search-process] No pending search records.");
+            Log.Info("[search-process] No pending search records.");
             return 0;
         }
 
@@ -31,13 +34,13 @@ public sealed class SearchProcessCommand : ICommand
             await File.WriteAllTextAsync(temporaryPath, content, ct);
             File.Move(temporaryPath, path, overwrite: false);
             await ctx.Search.CompleteAsync(claim, fileName, path, ct);
-            Console.WriteLine($"[search-process] Created {path} with {claim.Records.Count} detail record(s).");
+            Log.Info("[search-process] Created {Path} with {Count} detail record(s).", path, claim.Records.Count);
             return 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await ctx.Search.FailAsync(claim, ex.Message, ct);
-            Console.Error.WriteLine($"[search-process] Failed claim {claim.Token}: {ex.Message}");
+            Log.Error(ex, "[search-process] Failed claim {Token}: {Message}", claim.Token, ex.Message);
             return 1;
         }
     }

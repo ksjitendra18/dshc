@@ -1,8 +1,12 @@
+using NLog;
+
 namespace CKYC.Processor.Commands;
 
 /// <summary>Shows every upload batch that has contained an organization customer.</summary>
 public sealed class BatchFindCommand : ICommand
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     public string Name => "batch-find";
     public string Usage => "CKYCProcessor.exe batch-find --customer <customerId>";
 
@@ -11,20 +15,21 @@ public sealed class BatchFindCommand : ICommand
         var customerId = Option(args, "--customer");
         if (string.IsNullOrWhiteSpace(customerId))
         {
-            Console.Error.WriteLine("[batch-find] Pass --customer <customerId>.");
+            Log.Error("[batch-find] Pass --customer <customerId>.");
             return 1;
         }
 
         var rows = await ctx.Master.GetBatchHistoryAsync(customerId, ct);
         if (rows.Count == 0)
         {
-            Console.WriteLine($"[batch-find] No batch membership found for '{customerId}'.");
+            Log.Warn("[batch-find] No batch membership found for '{CustomerId}'.", customerId);
             return 1;
         }
 
-        Console.WriteLine($"[batch-find] {customerId} belongs to {rows.Count} batch(es):");
+        Log.Info("[batch-find] {CustomerId} belongs to {BatchCount} batch(es):", customerId, rows.Count);
         foreach (var row in rows)
-            Console.WriteLine($"  {row.BatchFile}  record20-line={row.Record20LineNumber?.ToString() ?? "?"}  batched={row.BatchedAt:O}");
+            Log.Info("[batch-find]   {BatchFile}  record20-line={Record20Line}  batched={BatchedAt:O}",
+                row.BatchFile, row.Record20LineNumber?.ToString() ?? "?", row.BatchedAt);
         return 0;
     }
 
