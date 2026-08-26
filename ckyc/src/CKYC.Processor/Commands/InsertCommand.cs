@@ -74,11 +74,13 @@ public sealed class InsertCommand : ICommand
 
         if (individual.Proofs.Count == 0) individual.Proofs = defaults.Proofs;
         if (individual.PermanentAddress is null) individual.PermanentAddress = defaults.PermanentAddress;
-        // No current address supplied => treat it as "same as the permanent (present) address".
-        if (individual.CurrentAddress is null)
-            individual.CurrentAddress = individual.PermanentAddress is null
-                ? defaults.CurrentAddress
-                : CloneAddress(individual.PermanentAddress);
+        // Record 40 carries an explicit same-address flag. Keep an empty current block only as
+        // the home of its four mandatory verification flags; never copy the permanent address.
+        individual.CurrentAddressSameAsPermanent = Coalesce(
+            individual.CurrentAddressSameAsPermanent,
+            individual.CurrentAddress is null ? "Y" : "N");
+        if (string.Equals(individual.CurrentAddressSameAsPermanent, "Y", StringComparison.OrdinalIgnoreCase))
+            individual.CurrentAddress ??= new AddressDetails();
         if (individual.Contact is null) individual.Contact = defaults.Contact;
         if (individual.RelatedParties.Count == 0) individual.RelatedParties = defaults.RelatedParties;
         if (individual.Other is null) individual.Other = defaults.Other;
@@ -96,12 +98,15 @@ public sealed class InsertCommand : ICommand
     private static void FillMissingConditionalFields(Individual r, Individual d)
     {
         // ---- record 20 ----
-        r.PanDocument ??= d.PanDocument;
         r.DateOfBirthMatchWithOvd ??= d.DateOfBirthMatchWithOvd;
         r.NameMatchWithOvd ??= d.NameMatchWithOvd;
         r.PhotoProvidedMatchWithOvd ??= d.PhotoProvidedMatchWithOvd;
         r.GenderProvidedInOvd ??= d.GenderProvidedInOvd;
         r.GenderMatchWithOvd ??= d.GenderMatchWithOvd;
+
+        // The PAN attachment is optional. PAN verified is the CM flag when a PAN number exists.
+        if (!string.IsNullOrWhiteSpace(r.Pan))
+            r.PanVerified = Coalesce(r.PanVerified, d.PanVerified);
 
         // One of PAN / Form 97 / Form 61 is required; default Form 97 when none is supplied.
         if (string.IsNullOrWhiteSpace(r.Pan)
@@ -130,45 +135,29 @@ public sealed class InsertCommand : ICommand
         {
             var c = r.CurrentAddress;
             var dc = d.CurrentAddress;
-            c.ProofOfAddress = Coalesce(c.ProofOfAddress, dc.ProofOfAddress);
-            c.ProofOfAddressType = Coalesce(c.ProofOfAddressType, dc.ProofOfAddressType);
-            c.LengthOfAadhaar = Coalesce(c.LengthOfAadhaar, dc.LengthOfAadhaar);
-            c.IdNumber = Coalesce(c.IdNumber, dc.IdNumber);
-            c.ModeOfAadhaarVerification = Coalesce(c.ModeOfAadhaarVerification, dc.ModeOfAadhaarVerification);
-            c.CopyOfOvd = Coalesce(c.CopyOfOvd, dc.CopyOfOvd);
+            if (string.Equals(r.CurrentAddressSameAsPermanent, "N", StringComparison.OrdinalIgnoreCase))
+            {
+                c.ProofOfAddress = Coalesce(c.ProofOfAddress, dc.ProofOfAddress);
+                c.ProofOfAddressType = Coalesce(c.ProofOfAddressType, dc.ProofOfAddressType);
+                c.LengthOfAadhaar = Coalesce(c.LengthOfAadhaar, dc.LengthOfAadhaar);
+                c.IdNumber = Coalesce(c.IdNumber, dc.IdNumber);
+                c.ModeOfAadhaarVerification = Coalesce(c.ModeOfAadhaarVerification, dc.ModeOfAadhaarVerification);
+                c.CertifiedCopyWithOriginal = Coalesce(c.CertifiedCopyWithOriginal, dc.CertifiedCopyWithOriginal);
+                c.EquivalentEDoc = Coalesce(c.EquivalentEDoc, dc.EquivalentEDoc);
+                c.VerifiedFromDigiLocker = Coalesce(c.VerifiedFromDigiLocker, dc.VerifiedFromDigiLocker);
+                c.CopyOfOvd = Coalesce(c.CopyOfOvd, dc.CopyOfOvd);
+                c.AddressExactlyMatch = Coalesce(c.AddressExactlyMatch, dc.AddressExactlyMatch);
+                c.PresenceInRepository = Coalesce(c.PresenceInRepository, dc.PresenceInRepository);
+            }
             c.RemoteGeoTagging = Coalesce(c.RemoteGeoTagging, dc.RemoteGeoTagging);
-            c.AddressExactlyMatch = Coalesce(c.AddressExactlyMatch, dc.AddressExactlyMatch);
             c.PositiveVerification = Coalesce(c.PositiveVerification, dc.PositiveVerification);
             c.PhysicalVerificationByThirdParty = Coalesce(c.PhysicalVerificationByThirdParty, dc.PhysicalVerificationByThirdParty);
             c.PhysicalVerificationByReOfficial = Coalesce(c.PhysicalVerificationByReOfficial, dc.PhysicalVerificationByReOfficial);
-            c.PresenceInRepository = Coalesce(c.PresenceInRepository, dc.PresenceInRepository);
         }
     }
 
     private static string Coalesce(string? value, string? fallback)
         => string.IsNullOrWhiteSpace(value) ? fallback ?? string.Empty : value;
-
-    /// <summary>Deep-copies an address block so the current address can mirror the permanent one.</summary>
-    private static AddressDetails CloneAddress(AddressDetails a) => new()
-    {
-        Line1 = a.Line1, Line2 = a.Line2, Line3 = a.Line3,
-        Country = a.Country, State = a.State, District = a.District, City = a.City,
-        PinCode = a.PinCode, PinCodeOthers = a.PinCodeOthers, Digipin = a.Digipin,
-        AddressSupportedWithDocument = a.AddressSupportedWithDocument,
-        AddressMatchWithOvd = a.AddressMatchWithOvd,
-        ProofOfAddress = a.ProofOfAddress, ProofOfAddressType = a.ProofOfAddressType,
-        LengthOfAadhaar = a.LengthOfAadhaar, IdNumber = a.IdNumber,
-        ModeOfAadhaarVerification = a.ModeOfAadhaarVerification, OvdExpiryDate = a.OvdExpiryDate,
-        DeemedPoa = a.DeemedPoa, DeemedPoaVerified = a.DeemedPoaVerified,
-        CertifiedCopyWithOriginal = a.CertifiedCopyWithOriginal, EquivalentEDoc = a.EquivalentEDoc,
-        VerifiedFromDigiLocker = a.VerifiedFromDigiLocker, RemoteGeoTagging = a.RemoteGeoTagging,
-        AddressExactlyMatch = a.AddressExactlyMatch, PositiveVerification = a.PositiveVerification,
-        PhysicalVerificationByThirdParty = a.PhysicalVerificationByThirdParty,
-        PhysicalVerificationByReOfficial = a.PhysicalVerificationByReOfficial,
-        PresenceInRepository = a.PresenceInRepository,
-        ForeignGovernmentDocument = a.ForeignGovernmentDocument,
-        CopyOfOvd = a.CopyOfOvd,
-    };
 
     /// <summary>Re-initialize any name block / collection a JSON might have set to null.</summary>
     private static void Normalize(Individual i)

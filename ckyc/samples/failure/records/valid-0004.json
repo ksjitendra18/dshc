@@ -48,6 +48,7 @@
     "addressSupportedWithDocument": "N",
     "addressMatchWithOvd": "N"
   },
+  "currentAddressSameAsPermanent": "N",
   "currentAddress": {
     "line1": "ABC",
     "line2": "CCC",

@@ -6,6 +6,8 @@ namespace CKYC.Data.Schema;
 /// exactly as requested ("length validation yes, other validation no").
 ///
 /// The same logical schema for SQL Server is shipped in scripts/sqlserver/schema.sql.
+/// The document-content tables deliberately enforce integrity because binary content
+/// must never become orphaned or ambiguously associated with a customer.
 /// </summary>
 public static class Ddl
 {
@@ -168,6 +170,7 @@ public static class Ddl
             PermDigipin                VARCHAR(10),
             PermSupportedDocument      VARCHAR(1),
             PermMatchOvd               VARCHAR(1),
+            CurrSameAsPermanent        VARCHAR(1),
             CurrLine1                  VARCHAR(60),
             CurrLine2                  VARCHAR(60),
             CurrLine3                  VARCHAR(60),
@@ -179,7 +182,26 @@ public static class Ddl
             CurrPinOthers              VARCHAR(6),
             CurrDigipin                VARCHAR(10),
             CurrSupportedDocument      VARCHAR(1),
-            CurrMatchOvd               VARCHAR(1)
+            CurrMatchOvd               VARCHAR(1),
+            CurrProofOfAddress         VARCHAR(1),
+            CurrProofOfAddressType     VARCHAR(1),
+            CurrLengthOfAadhaar        VARCHAR(1),
+            CurrIdNumber               VARCHAR(100),
+            CurrAadhaarVerification    VARCHAR(1),
+            CurrOvdExpiryDate          VARCHAR(10),
+            CurrDeemedPoa              VARCHAR(2),
+            CurrDeemedPoaVerified      VARCHAR(1),
+            CurrCertifiedCopy          VARCHAR(1),
+            CurrEquivalentEDoc         VARCHAR(1),
+            CurrDigiLockerVerified     VARCHAR(1),
+            CurrRemoteGeoTagging       VARCHAR(1),
+            CurrAddressExactlyMatch    VARCHAR(50),
+            CurrPositiveVerification   VARCHAR(1),
+            CurrPhysicalThirdParty     VARCHAR(1),
+            CurrPhysicalReOfficial     VARCHAR(1),
+            CurrPresenceInRepository   VARCHAR(1),
+            CurrForeignGovDocument     VARCHAR(125),
+            CurrCopyOfOvd              VARCHAR(125)
         )
         """,
 
@@ -731,6 +753,35 @@ public static class Ddl
             DeclarationDate            VARCHAR(10)
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS file_content (
+            Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            Sha256      VARCHAR(64) NOT NULL UNIQUE,
+            Content     BLOB NOT NULL,
+            ByteLength  INTEGER NOT NULL CHECK (ByteLength > 0),
+            CreatedAt   TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS customer_document (
+            Id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            MasterRecordId      INTEGER NOT NULL,
+            FileContentId       INTEGER NOT NULL,
+            OriginalFileName    VARCHAR(255) NOT NULL,
+            CanonicalFileName   VARCHAR(255) NOT NULL,
+            MediaType           VARCHAR(100) NOT NULL,
+            DocumentKind        VARCHAR(50),
+            SourceType          VARCHAR(30) NOT NULL,
+            SourceReference     VARCHAR(500),
+            CreatedAt           TEXT NOT NULL,
+            UpdatedAt           TEXT NOT NULL,
+            FOREIGN KEY (MasterRecordId) REFERENCES master_record(Id) ON DELETE CASCADE,
+            FOREIGN KEY (FileContentId) REFERENCES file_content(Id) ON DELETE RESTRICT,
+            UNIQUE (MasterRecordId, CanonicalFileName)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_customer_document_master ON customer_document(MasterRecordId)",
+        "CREATE INDEX IF NOT EXISTS ix_customer_document_content ON customer_document(FileContentId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record20_master ON legal_entity_record_20(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record30_master ON legal_entity_record_30(MasterRecordId)",
         "CREATE INDEX IF NOT EXISTS ix_le_record40_master ON legal_entity_record_40(MasterRecordId)",
@@ -764,6 +815,22 @@ public static class Ddl
     /// </summary>
     public static readonly string[] PostMigrationStatements =
     {
+        """
+        UPDATE kyc_record_40
+           SET CurrSameAsPermanent = CASE
+               WHEN COALESCE(TRIM(CurrLine1), '') = '' THEN 'Y'
+               WHEN COALESCE(TRIM(CurrLine1), '') = COALESCE(TRIM(PermLine1), '')
+                AND COALESCE(TRIM(CurrLine2), '') = COALESCE(TRIM(PermLine2), '')
+                AND COALESCE(TRIM(CurrLine3), '') = COALESCE(TRIM(PermLine3), '')
+                AND COALESCE(TRIM(CurrCountry), '') = COALESCE(TRIM(PermCountry), '')
+                AND COALESCE(TRIM(CurrState), '') = COALESCE(TRIM(PermState), '')
+                AND COALESCE(TRIM(CurrDistrict), '') = COALESCE(TRIM(PermDistrict), '')
+                AND COALESCE(TRIM(CurrCity), '') = COALESCE(TRIM(PermCity), '')
+                AND COALESCE(TRIM(CurrPinCode), '') = COALESCE(TRIM(PermPinCode), '') THEN 'Y'
+               ELSE 'N'
+               END
+         WHERE CurrSameAsPermanent IS NULL OR TRIM(CurrSameAsPermanent) = ''
+        """,
         "CREATE INDEX IF NOT EXISTS ix_master_batchline ON master_record(BatchFile, BatchRecordLine)",
         "CREATE INDEX IF NOT EXISTS ix_master_customer_id ON master_record(CustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_master_record_batch_customer ON master_record_batch(CustomerId, BatchedAt)",
@@ -993,6 +1060,29 @@ public static class Ddl
         ("kyc_record_20", "DisabilityDate", "ALTER TABLE kyc_record_20 ADD COLUMN DisabilityDate VARCHAR(10)"),
         ("kyc_record_20", "PercentageOfImpairment", "ALTER TABLE kyc_record_20 ADD COLUMN PercentageOfImpairment VARCHAR(3)"),
         ("kyc_record_20", "DifferentlyAbledSupportedByDocument", "ALTER TABLE kyc_record_20 ADD COLUMN DifferentlyAbledSupportedByDocument VARCHAR(1)"),
+
+        // ---- record-40 current-address proof fields. Older schemas retained only
+        //      address text, so these values were lost between insert and build-zip. ----
+        ("kyc_record_40", "CurrSameAsPermanent", "ALTER TABLE kyc_record_40 ADD COLUMN CurrSameAsPermanent VARCHAR(1)"),
+        ("kyc_record_40", "CurrProofOfAddress", "ALTER TABLE kyc_record_40 ADD COLUMN CurrProofOfAddress VARCHAR(1)"),
+        ("kyc_record_40", "CurrProofOfAddressType", "ALTER TABLE kyc_record_40 ADD COLUMN CurrProofOfAddressType VARCHAR(1)"),
+        ("kyc_record_40", "CurrLengthOfAadhaar", "ALTER TABLE kyc_record_40 ADD COLUMN CurrLengthOfAadhaar VARCHAR(1)"),
+        ("kyc_record_40", "CurrIdNumber", "ALTER TABLE kyc_record_40 ADD COLUMN CurrIdNumber VARCHAR(100)"),
+        ("kyc_record_40", "CurrAadhaarVerification", "ALTER TABLE kyc_record_40 ADD COLUMN CurrAadhaarVerification VARCHAR(1)"),
+        ("kyc_record_40", "CurrOvdExpiryDate", "ALTER TABLE kyc_record_40 ADD COLUMN CurrOvdExpiryDate VARCHAR(10)"),
+        ("kyc_record_40", "CurrDeemedPoa", "ALTER TABLE kyc_record_40 ADD COLUMN CurrDeemedPoa VARCHAR(2)"),
+        ("kyc_record_40", "CurrDeemedPoaVerified", "ALTER TABLE kyc_record_40 ADD COLUMN CurrDeemedPoaVerified VARCHAR(1)"),
+        ("kyc_record_40", "CurrCertifiedCopy", "ALTER TABLE kyc_record_40 ADD COLUMN CurrCertifiedCopy VARCHAR(1)"),
+        ("kyc_record_40", "CurrEquivalentEDoc", "ALTER TABLE kyc_record_40 ADD COLUMN CurrEquivalentEDoc VARCHAR(1)"),
+        ("kyc_record_40", "CurrDigiLockerVerified", "ALTER TABLE kyc_record_40 ADD COLUMN CurrDigiLockerVerified VARCHAR(1)"),
+        ("kyc_record_40", "CurrRemoteGeoTagging", "ALTER TABLE kyc_record_40 ADD COLUMN CurrRemoteGeoTagging VARCHAR(1)"),
+        ("kyc_record_40", "CurrAddressExactlyMatch", "ALTER TABLE kyc_record_40 ADD COLUMN CurrAddressExactlyMatch VARCHAR(50)"),
+        ("kyc_record_40", "CurrPositiveVerification", "ALTER TABLE kyc_record_40 ADD COLUMN CurrPositiveVerification VARCHAR(1)"),
+        ("kyc_record_40", "CurrPhysicalThirdParty", "ALTER TABLE kyc_record_40 ADD COLUMN CurrPhysicalThirdParty VARCHAR(1)"),
+        ("kyc_record_40", "CurrPhysicalReOfficial", "ALTER TABLE kyc_record_40 ADD COLUMN CurrPhysicalReOfficial VARCHAR(1)"),
+        ("kyc_record_40", "CurrPresenceInRepository", "ALTER TABLE kyc_record_40 ADD COLUMN CurrPresenceInRepository VARCHAR(1)"),
+        ("kyc_record_40", "CurrForeignGovDocument", "ALTER TABLE kyc_record_40 ADD COLUMN CurrForeignGovDocument VARCHAR(125)"),
+        ("kyc_record_40", "CurrCopyOfOvd", "ALTER TABLE kyc_record_40 ADD COLUMN CurrCopyOfOvd VARCHAR(125)"),
 
         // ---- master_record stage/response tracking columns (added when the lifecycle was
         //      extended past FVU. Columns are nullable; existing rows keep their old values.) ----

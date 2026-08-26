@@ -19,8 +19,13 @@ namespace CKYC.Files;
 public sealed class CkycLegalEntityUploadWriter
 {
     private readonly BatchSettings _batch;
+    private readonly Func<string, string?, string?> _documentName;
 
-    public CkycLegalEntityUploadWriter(BatchSettings batch) => _batch = batch;
+    public CkycLegalEntityUploadWriter(BatchSettings batch, Func<string, string?, string?>? documentName = null)
+    {
+        _batch = batch;
+        _documentName = documentName ?? ((_, name) => name);
+    }
 
     public string Write(IReadOnlyList<LegalEntity> records, DateOnly businessDate)
     {
@@ -36,7 +41,7 @@ public sealed class CkycLegalEntityUploadWriter
 
             // Record 30 : one POI line for the entity (the applicable constitution block).
             if (record.Proofs.Count > 0)
-                sb.AppendLine(BuildRecord30(record.Proofs[0], r20Line, lineNo++));
+                sb.AppendLine(BuildRecord30(record.CustomerId, record.Proofs[0], r20Line, lineNo++));
 
             if (record.RegisteredAddress is not null)
                 sb.AppendLine(BuildRecord40(record, r20Line, lineNo++));
@@ -89,7 +94,7 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord20(LegalEntity r, int lineNo)
+    private string BuildRecord20(LegalEntity r, int lineNo)
     {
         var f = new string?[24];
         f[0] = CkycRecords.Demographic;               // 20
@@ -108,9 +113,9 @@ public sealed class CkycLegalEntityUploadWriter
         f[13] = Coalesce(r.Pan, "");
         f[14] = Coalesce(r.Form97, "");
         f[15] = Coalesce(r.TinGstNumber, "");
-        f[16] = Coalesce(r.PanDocument, "");
+        f[16] = Doc(r.CustomerId, Coalesce(r.PanDocument, ""));
         f[17] = Coalesce(r.PanVerified, "Y");
-        f[18] = Coalesce(r.TinGstnDocument, "");
+        f[18] = Doc(r.CustomerId, Coalesce(r.TinGstnDocument, ""));
 
         // Detail-record counts must match the records actually emitted below.
         f[19] = (r.Proofs.Count > 0) ? "1" : "0";                       // record 30
@@ -121,7 +126,7 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord30(LeProofOfIdentity p, int r20Line, int lineNo)
+    private string BuildRecord30(string customerId, LeProofOfIdentity p, int r20Line, int lineNo)
     {
         var f = new string?[36];
         f[0] = CkycRecords.Proof;                     // 30
@@ -129,52 +134,52 @@ public sealed class CkycLegalEntityUploadWriter
         f[2] = r20Line.ToString();
 
         // ---- Company / Section 8 ----
-        f[3] = Coalesce(p.CertificateOfIncorporation, "");
+        f[3] = Doc(customerId, Coalesce(p.CertificateOfIncorporation, ""));
         f[4] = Coalesce(p.Cin, "");
-        f[5] = Coalesce(p.MemorandumAndArticles, "");
-        f[6] = Coalesce(p.ResolutionBoardPoA, "");
-        f[7] = Coalesce(p.NamesSeniorManagement, "");
-        f[8] = Coalesce(p.CertificateOfCommencement, "");
-        f[9] = Coalesce(p.OthersCompany, "");
+        f[5] = Doc(customerId, Coalesce(p.MemorandumAndArticles, ""));
+        f[6] = Doc(customerId, Coalesce(p.ResolutionBoardPoA, ""));
+        f[7] = Doc(customerId, Coalesce(p.NamesSeniorManagement, ""));
+        f[8] = Doc(customerId, Coalesce(p.CertificateOfCommencement, ""));
+        f[9] = Doc(customerId, Coalesce(p.OthersCompany, ""));
 
         // ---- Partnership Firm / LLP ----
-        f[10] = Coalesce(p.RegistrationCertificate, "");
+        f[10] = Doc(customerId, Coalesce(p.RegistrationCertificate, ""));
         f[11] = Coalesce(p.RegistrationNumber, "");
-        f[12] = Coalesce(p.LlpinCertificate, "");
+        f[12] = Doc(customerId, Coalesce(p.LlpinCertificate, ""));
         f[13] = Coalesce(p.Llpin, "");
-        f[14] = Coalesce(p.PartnershipDeed, "");
-        f[15] = Coalesce(p.NamesAllPartners, "");
-        f[16] = Coalesce(p.OthersPartnership, "");
+        f[14] = Doc(customerId, Coalesce(p.PartnershipDeed, ""));
+        f[15] = Doc(customerId, Coalesce(p.NamesAllPartners, ""));
+        f[16] = Doc(customerId, Coalesce(p.OthersPartnership, ""));
 
         // ---- Trust ----
-        f[17] = Coalesce(p.TrustRegistrationCertificate, "");
+        f[17] = Doc(customerId, Coalesce(p.TrustRegistrationCertificate, ""));
         f[18] = Coalesce(p.TrustRegistrationNumber, "");
-        f[19] = Coalesce(p.TrustDeed, "");
-        f[20] = Coalesce(p.NamesBeneficiariesTrustees, "");
-        f[21] = Coalesce(p.TrustPowerOfAttorney, "");
-        f[22] = Coalesce(p.OthersTrust, "");
+        f[19] = Doc(customerId, Coalesce(p.TrustDeed, ""));
+        f[20] = Doc(customerId, Coalesce(p.NamesBeneficiariesTrustees, ""));
+        f[21] = Doc(customerId, Coalesce(p.TrustPowerOfAttorney, ""));
+        f[22] = Doc(customerId, Coalesce(p.OthersTrust, ""));
 
         // ---- Unincorporated Association ----
-        f[23] = Coalesce(p.UnincorporatedRegistrationCertificate, "");
+        f[23] = Doc(customerId, Coalesce(p.UnincorporatedRegistrationCertificate, ""));
         f[24] = Coalesce(p.UnincorporatedRegistrationNumber, "");
-        f[25] = Coalesce(p.ResolutionManagingBody, "");
-        f[26] = Coalesce(p.UnincorporatedPowerOfAttorney, "");
-        f[27] = Coalesce(p.InfoEstablishExistence, "");
-        f[28] = Coalesce(p.OthersUnincorporated, "");
+        f[25] = Doc(customerId, Coalesce(p.ResolutionManagingBody, ""));
+        f[26] = Doc(customerId, Coalesce(p.UnincorporatedPowerOfAttorney, ""));
+        f[27] = Doc(customerId, Coalesce(p.InfoEstablishExistence, ""));
+        f[28] = Doc(customerId, Coalesce(p.OthersUnincorporated, ""));
 
         // ---- Other constitution types ----
-        f[29] = Coalesce(p.SupportingDocumentsPoi, "");
+        f[29] = Doc(customerId, Coalesce(p.SupportingDocumentsPoi, ""));
         f[30] = Coalesce(p.OtherTypeRegistrationNumber, "");
-        f[31] = Coalesce(p.OtherTypeRegistrationCertificate, "");
-        f[32] = Coalesce(p.OtherTypePowerOfAttorney, "");
-        f[33] = Coalesce(p.ActivityProof1, "");
-        f[34] = Coalesce(p.ActivityProof2, "");
-        f[35] = Coalesce(p.OthersOtherType, "");
+        f[31] = Doc(customerId, Coalesce(p.OtherTypeRegistrationCertificate, ""));
+        f[32] = Doc(customerId, Coalesce(p.OtherTypePowerOfAttorney, ""));
+        f[33] = Doc(customerId, Coalesce(p.ActivityProof1, ""));
+        f[34] = Doc(customerId, Coalesce(p.ActivityProof2, ""));
+        f[35] = Doc(customerId, Coalesce(p.OthersOtherType, ""));
 
         return string.Join('|', f);
     }
 
-    private static string BuildRecord40(LegalEntity r, int r20Line, int lineNo)
+    private string BuildRecord40(LegalEntity r, int r20Line, int lineNo)
     {
         var reg = r.RegisteredAddress!;
         var prin = r.PrincipalAddress;
@@ -204,8 +209,8 @@ public sealed class CkycLegalEntityUploadWriter
         }
 
         // Supporting documents.
-        f[28] = Coalesce(r.RegisteredAddressDocument, "RegAddress.pdf");
-        f[29] = Coalesce(r.PrincipalAddressDocument, "PrinAddress.pdf");
+        f[28] = Doc(r.CustomerId, Coalesce(r.RegisteredAddressDocument, "RegAddress.pdf"));
+        f[29] = Doc(r.CustomerId, Coalesce(r.PrincipalAddressDocument, "PrinAddress.pdf"));
 
         return string.Join('|', f);
     }
@@ -244,7 +249,7 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord70(LegalEntity r, int r20Line, int lineNo, DateOnly businessDate)
+    private string BuildRecord70(LegalEntity r, int r20Line, int lineNo, DateOnly businessDate)
     {
         var o = r.Other!;
         var f = new string?[20];
@@ -263,9 +268,9 @@ public sealed class CkycLegalEntityUploadWriter
         f[12] = Coalesce(o.EmployeeCkycId, "");
         f[13] = Coalesce(o.InstitutionName, "");
         f[14] = Coalesce(o.InstitutionCode, "");
-        f[15] = Coalesce(o.DeclarationDocument, "");
+        f[15] = Doc(r.CustomerId, Coalesce(o.DeclarationDocument, ""));
         f[16] = Coalesce(o.DeclarationFlag, "Y");
-        f[17] = Coalesce(o.ConsentDocument, "");
+        f[17] = Doc(r.CustomerId, Coalesce(o.ConsentDocument, ""));
         f[18] = Coalesce(o.Place, "");
         f[19] = Coalesce(o.DeclarationDate, businessDate.ToString("dd-MM-yyyy"));
         return string.Join('|', f);
@@ -281,4 +286,6 @@ public sealed class CkycLegalEntityUploadWriter
 
     private static string Coalesce(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    private string? Doc(string customerId, string? value) => string.IsNullOrEmpty(value) ? value : _documentName(customerId, value);
 }

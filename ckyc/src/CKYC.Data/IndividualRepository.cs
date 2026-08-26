@@ -76,7 +76,9 @@ public sealed class IndividualRepository : IIndividualRepository
         {
             ind.Proofs = await LoadRecord30Async(conn, ind.MasterRecordId, ct);
             ind.PermanentAddress = await LoadPermanentAddressAsync(conn, ind.MasterRecordId, ct);
-            ind.CurrentAddress = await LoadCurrentAddressAsync(conn, ind.MasterRecordId, ct);
+            var currentAddress = await LoadCurrentAddressAsync(conn, ind.MasterRecordId, ct);
+            ind.CurrentAddressSameAsPermanent = currentAddress.SameAsPermanent;
+            ind.CurrentAddress = currentAddress.Address;
             ind.Contact = await LoadRecord50Async(conn, ind.MasterRecordId, ct);
             ind.RelatedParties = await LoadRecord60Async(conn, ind.MasterRecordId, ct);
             ind.Other = await LoadRecord70Async(conn, ind.MasterRecordId, ct);
@@ -119,19 +121,23 @@ public sealed class IndividualRepository : IIndividualRepository
         return await r.ReadAsync(ct) ? ReadAddress(r, "Perm") : null;
     }
 
-    private static async Task<AddressDetails?> LoadCurrentAddressAsync(DbConnection conn, long masterId, CancellationToken ct)
+    private static async Task<(string? SameAsPermanent, AddressDetails? Address)> LoadCurrentAddressAsync(
+        DbConnection conn,
+        long masterId,
+        CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT * FROM kyc_record_40 WHERE MasterRecordId=@m";
         cmd.Parameters.Add(NewParam("@m", masterId));
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? ReadAddress(r, "Curr") : null;
+        if (!await r.ReadAsync(ct)) return (null, null);
+        return (r["CurrSameAsPermanent"] as string, ReadAddress(r, "Curr"));
     }
 
     private static AddressDetails ReadAddress(DbDataReader r, string pfx)
     {
         string? G(string c) => r[c] as string;
-        return new AddressDetails
+        var address = new AddressDetails
         {
             Line1 = G($"{pfx}Line1") ?? "", Line2 = G($"{pfx}Line2") ?? "", Line3 = G($"{pfx}Line3") ?? "",
             Country = G($"{pfx}Country") ?? "", State = G($"{pfx}State") ?? "", District = G($"{pfx}District") ?? "",
@@ -139,6 +145,29 @@ public sealed class IndividualRepository : IIndividualRepository
             Digipin = G($"{pfx}Digipin"), AddressSupportedWithDocument = G($"{pfx}SupportedDocument") ?? "Y",
             AddressMatchWithOvd = G($"{pfx}MatchOvd") ?? "Y",
         };
+        if (pfx == "Curr")
+        {
+            address.ProofOfAddress = G("CurrProofOfAddress");
+            address.ProofOfAddressType = G("CurrProofOfAddressType");
+            address.LengthOfAadhaar = G("CurrLengthOfAadhaar");
+            address.IdNumber = G("CurrIdNumber");
+            address.ModeOfAadhaarVerification = G("CurrAadhaarVerification");
+            address.OvdExpiryDate = G("CurrOvdExpiryDate");
+            address.DeemedPoa = G("CurrDeemedPoa");
+            address.DeemedPoaVerified = G("CurrDeemedPoaVerified");
+            address.CertifiedCopyWithOriginal = G("CurrCertifiedCopy");
+            address.EquivalentEDoc = G("CurrEquivalentEDoc");
+            address.VerifiedFromDigiLocker = G("CurrDigiLockerVerified");
+            address.RemoteGeoTagging = G("CurrRemoteGeoTagging");
+            address.AddressExactlyMatch = G("CurrAddressExactlyMatch");
+            address.PositiveVerification = G("CurrPositiveVerification");
+            address.PhysicalVerificationByThirdParty = G("CurrPhysicalThirdParty");
+            address.PhysicalVerificationByReOfficial = G("CurrPhysicalReOfficial");
+            address.PresenceInRepository = G("CurrPresenceInRepository");
+            address.ForeignGovernmentDocument = G("CurrForeignGovDocument");
+            address.CopyOfOvd = G("CurrCopyOfOvd");
+        }
+        return address;
     }
 
     private static async Task<ContactDetails?> LoadRecord50Async(DbConnection conn, long masterId, CancellationToken ct)
@@ -269,21 +298,38 @@ public sealed class IndividualRepository : IIndividualRepository
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO kyc_record_40
-                (MasterRecordId, CustomerId, Record20LineNumber, PermLine1, PermLine2, PermLine3, PermCountry, PermState, PermDistrict, PermCity, PermPinCode, PermPinOthers, PermDigipin, PermSupportedDocument, PermMatchOvd,
-                 CurrLine1, CurrLine2, CurrLine3, CurrCountry, CurrState, CurrDistrict, CurrCity, CurrPinCode, CurrPinOthers, CurrDigipin, CurrSupportedDocument, CurrMatchOvd)
+                (MasterRecordId, CustomerId, Record20LineNumber, PermLine1, PermLine2, PermLine3, PermCountry, PermState, PermDistrict, PermCity, PermPinCode, PermPinOthers, PermDigipin, PermSupportedDocument, PermMatchOvd, CurrSameAsPermanent,
+                 CurrLine1, CurrLine2, CurrLine3, CurrCountry, CurrState, CurrDistrict, CurrCity, CurrPinCode, CurrPinOthers, CurrDigipin, CurrSupportedDocument, CurrMatchOvd,
+                 CurrProofOfAddress, CurrProofOfAddressType, CurrLengthOfAadhaar, CurrIdNumber, CurrAadhaarVerification,
+                 CurrOvdExpiryDate, CurrDeemedPoa, CurrDeemedPoaVerified, CurrCertifiedCopy, CurrEquivalentEDoc,
+                 CurrDigiLockerVerified, CurrRemoteGeoTagging, CurrAddressExactlyMatch, CurrPositiveVerification,
+                 CurrPhysicalThirdParty, CurrPhysicalReOfficial, CurrPresenceInRepository, CurrForeignGovDocument, CurrCopyOfOvd)
             VALUES
-                (@m, @customer, 1, @p1,@p2,@p3,@pco,@pst,@pdi,@pci,@ppin,@ppinO,@pdig,@psup,@pmatch,
-                 @c1,@c2,@c3,@cco,@cst,@cdi,@cci,@cpin,@cpinO,@cdig,@csup,@cmatch)
+                (@m, @customer, 1, @p1,@p2,@p3,@pco,@pst,@pdi,@pci,@ppin,@ppinO,@pdig,@psup,@pmatch,@same,
+                 @c1,@c2,@c3,@cco,@cst,@cdi,@cci,@cpin,@cpinO,@cdig,@csup,@cmatch,
+                 @cproof,@cproofType,@clength,@cid,@caadhaar,@cexpiry,@cdeemed,@cdeemedVerified,@ccertified,@cequivalent,
+                 @cdigilocker,@cgeo,@cexact,@cpositive,@cphysicalThird,@cphysicalRe,@cpresence,@cforeign,@ccopy)
             """;
         Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId);
         Add(cmd, "@p1", perm?.Line1); Add(cmd, "@p2", perm?.Line2); Add(cmd, "@p3", perm?.Line3);
         Add(cmd, "@pco", perm?.Country); Add(cmd, "@pst", perm?.State); Add(cmd, "@pdi", perm?.District);
         Add(cmd, "@pci", perm?.City); Add(cmd, "@ppin", perm?.PinCode); Add(cmd, "@ppinO", perm?.PinCodeOthers);
         Add(cmd, "@pdig", perm?.Digipin); Add(cmd, "@psup", perm?.AddressSupportedWithDocument); Add(cmd, "@pmatch", perm?.AddressMatchWithOvd);
+        Add(cmd, "@same", r.CurrentAddressSameAsPermanent);
         Add(cmd, "@c1", curr?.Line1); Add(cmd, "@c2", curr?.Line2); Add(cmd, "@c3", curr?.Line3);
         Add(cmd, "@cco", curr?.Country); Add(cmd, "@cst", curr?.State); Add(cmd, "@cdi", curr?.District);
         Add(cmd, "@cci", curr?.City); Add(cmd, "@cpin", curr?.PinCode); Add(cmd, "@cpinO", curr?.PinCodeOthers);
         Add(cmd, "@cdig", curr?.Digipin); Add(cmd, "@csup", curr?.AddressSupportedWithDocument); Add(cmd, "@cmatch", curr?.AddressMatchWithOvd);
+        Add(cmd, "@cproof", curr?.ProofOfAddress); Add(cmd, "@cproofType", curr?.ProofOfAddressType);
+        Add(cmd, "@clength", curr?.LengthOfAadhaar); Add(cmd, "@cid", curr?.IdNumber);
+        Add(cmd, "@caadhaar", curr?.ModeOfAadhaarVerification); Add(cmd, "@cexpiry", curr?.OvdExpiryDate);
+        Add(cmd, "@cdeemed", curr?.DeemedPoa); Add(cmd, "@cdeemedVerified", curr?.DeemedPoaVerified);
+        Add(cmd, "@ccertified", curr?.CertifiedCopyWithOriginal); Add(cmd, "@cequivalent", curr?.EquivalentEDoc);
+        Add(cmd, "@cdigilocker", curr?.VerifiedFromDigiLocker); Add(cmd, "@cgeo", curr?.RemoteGeoTagging);
+        Add(cmd, "@cexact", curr?.AddressExactlyMatch); Add(cmd, "@cpositive", curr?.PositiveVerification);
+        Add(cmd, "@cphysicalThird", curr?.PhysicalVerificationByThirdParty); Add(cmd, "@cphysicalRe", curr?.PhysicalVerificationByReOfficial);
+        Add(cmd, "@cpresence", curr?.PresenceInRepository); Add(cmd, "@cforeign", curr?.ForeignGovernmentDocument);
+        Add(cmd, "@ccopy", curr?.CopyOfOvd);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

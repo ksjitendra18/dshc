@@ -20,7 +20,7 @@ failure, the retry/recovery (or the manual-intervention report) at each step.
 | T2 | 3. CRM → record save | `store` + `retry` | a targeted save always fails → retry budget exhausted → reconcile | `ids.json` + `settings-save-fail.json` |
 | T3 | 2./3. CRM API | `crm serve` / `store` | CRM API not running → `store` fails with a connection error | `settings-clean.json` (no CRM started) |
 | T4 | 3. CRM → record save | `store` + `retry` | every 4th save fails once, then recovers on retry | `ids.json` + `settings-save-every.json` |
-| T5 | 4. Batch generation | `build-zip` | records fail pre-flight validation → excluded (`Skipped`) | `records/no-dob.json`, `pan-no-doc.json`, `no-family.json`, `address-incomplete.json` |
+| T5 | 4. Batch generation | `build-zip` | invalid records are excluded; PAN without an optional attachment remains valid | `records/no-dob.json`, `pan-no-doc.json`, `no-family.json`, `address-incomplete.json` |
 | T6 | 5. FVU upload | `fvu` | **supporting document not available** (deleted from the batch folder) → FVU validation fails | 5× `records/valid-*.json` |
 | T7 | 6. CERSAI reply | `response read` | reply rejects records, incl. **"DOCUMENT NOT AVAILABLE"**, then `reattempt` re-push | `response/response-template.RES0` |
 
@@ -256,15 +256,13 @@ foreach ($n in 1..5) { & $exe --settings "$s\settings-clean.json" insert --file 
 & $exe --settings "$s\settings-clean.json" build-zip
 ```
 
-Expected — 5 valid records batched, 4 skipped with their exact rule violations:
+Expected — 6 valid records batched (including `pan-no-doc.json`), 3 skipped with their exact rule violations:
 
 ```
-[build-zip] Batch 'I_IAU010441_IN0238_..._0000X' generated with 5 record(s).
-[build-zip]   Skipped     : 4 record(s) failed validation and were excluded:
+[build-zip] Batch 'I_IAU010441_IN0238_..._0000X' generated with 6 record(s).
+[build-zip]   Skipped     : 3 record(s) failed validation and were excluded:
     ! TEST-FAIL-NODOB-01 (Rakesh Mehta)
         - [20/Date of Birth] Date of Birth is mandatory.
-    ! TEST-FAIL-PAN-01 (Vijay Malhotra)
-        - [20/PAN Document] PAN supporting document is mandatory when PAN is provided.
     ! TEST-FAIL-FAM-01 (Divya Rao)
         - [20/Mother / Father / Spouse Name] At least one of Mother Name, Father Name or Spouse Name must be provided.
     ! TEST-FAIL-ADDR-01 (Sachin Deshmukh)
@@ -442,7 +440,7 @@ Now `& $exe build-zip` re-batches it (only that record is `Saved`), re-run
 | `settings-clean.json` | full config; all failure simulations off (control runs) |
 | `records/valid-0001.json` … `valid-0005.json` | valid records (incl. motherName) for batch/FVU/response scenarios |
 | `records/no-dob.json` | `build-zip` skip — Date of Birth missing |
-| `records/pan-no-doc.json` | `build-zip` skip — PAN given, PAN document missing |
+| `records/pan-no-doc.json` | valid regression control — PAN supplied with `panVerified=Y`; optional PAN attachment omitted |
 | `records/no-family.json` | `build-zip` skip — no Mother/Father/Spouse name |
 | `records/address-incomplete.json` | `build-zip` skip — permanent address without State/District/City/Pin |
 | `response/response-template.RES0` | CERSAI reply template: 2 reconciled + 3 rejected (`DOCUMENT NOT AVAILABLE`, `PAN MISMATCHED…`, `NAME MISMATCHED…`) |

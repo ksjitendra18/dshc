@@ -20,6 +20,7 @@ public sealed class CommandRegistry
             new FetchCommand(),
             new InsertCommand(),
             new InsertLegalCommand(),
+            new DocumentsCommand(),
             new CrmServeCommand(),
             new StoreCommand(),
             new RetryCommand(),
@@ -56,6 +57,7 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe retry");
         sb.AppendLine("  CKYCProcessor.exe reattempt --customer CUST202608240001 --reason \"PAN corrected\"");
         sb.AppendLine("  CKYCProcessor.exe build-zip");
+        sb.AppendLine("  CKYCProcessor.exe documents import --customer-id CUST202608240001 --dir .\\staging\\CUST202608240001");
         sb.AppendLine("  CKYCProcessor.exe batch-find --customer CUST202608240001");
         sb.AppendLine("  CKYCProcessor.exe fvu");
         sb.AppendLine("  CKYCProcessor.exe response read");

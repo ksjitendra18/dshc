@@ -18,14 +18,16 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
 {
     private readonly BatchSettings _batch;
     private readonly IFileHasher _hasher;
+    private readonly IDocumentStore _documents;
 
-    public CkycLegalEntityBatchGenerator(BatchSettings batch, IFileHasher hasher)
+    public CkycLegalEntityBatchGenerator(BatchSettings batch, IFileHasher hasher, IDocumentStore documents)
     {
         _batch = batch;
         _hasher = hasher;
+        _documents = documents;
     }
 
-    public Task<GeneratedBatch> GenerateAsync(IReadOnlyList<LegalEntity> records, DateOnly businessDate, CancellationToken ct = default)
+    public async Task<GeneratedBatch> GenerateAsync(IReadOnlyList<LegalEntity> records, DateOnly businessDate, CancellationToken ct = default)
     {
         if (records.Count == 0)
             throw new InvalidOperationException("No legal-entity records supplied to the batch generator.");
@@ -38,6 +40,14 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
                 $"All {records.Count} legal-entity record(s) failed validation — no batch was produced. " +
                 FormatValidationFailures(skipped));
 
+        var descriptors = valid.Select(Describe).ToList();
+        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        ApplyDocumentChecks(valid, skipped, documentPlan, missing);
+        if (valid.Count == 0)
+            throw new InvalidOperationException($"All {records.Count} legal-entity record(s) failed validation or document checks. " + FormatValidationFailures(skipped));
+        descriptors = valid.Select(Describe).ToList();
+        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+
         var fileName = CkycFileName.Build("L", _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);
 
@@ -47,30 +57,21 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         Directory.CreateDirectory(uploadDir);
         Directory.CreateDirectory(docDir);
 
-        ApplyCustomerSizeLimits(valid, skipped, docDir);
-        if (valid.Count == 0)
-            throw new InvalidOperationException($"All {records.Count} legal-entity record(s) failed validation or document-size limits. " +
-                FormatValidationFailures(skipped));
-
-        var writer = new CkycLegalEntityUploadWriter(_batch);
+        var writer = new CkycLegalEntityUploadWriter(_batch, documentPlan.Map);
         var content = writer.Write(valid, businessDate);
         var record20Lines = CkycLegalEntityUploadWriter.ComputeRecord20Lines(valid);
 
         var uploadPath = Path.Combine(uploadDir, fileName);
         File.WriteAllText(uploadPath, content, new UTF8Encoding(false));
 
-        foreach (var r in valid)
-            foreach (var doc in EnumerateDocs(r))
-            {
-                var path = Path.Combine(docDir, doc);
-                if (!File.Exists(path)) File.WriteAllBytes(path, new byte[] { 0x25, 0x50, 0x44, 0x46 }); // "%PDF"
-            }
+        await documentPlan.MaterializeAsync(descriptors, docDir, ct);
 
         var zipPath = Path.Combine(batchDir, $"{batchKey}.zip");
         if (File.Exists(zipPath)) File.Delete(zipPath);
-        CreateArchive(uploadPath, docDir, valid.SelectMany(EnumerateDocs), zipPath);
+        CreateArchive(uploadPath, docDir,
+            valid.SelectMany(r => DocumentReferences.For(r).Select(name => documentPlan.Map(r.CustomerId, name)!)), zipPath);
 
-        return Task.FromResult(new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines));
+        return new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines);
     }
 
     private static (List<LegalEntity> Valid, List<SkippedRecord> Skipped) Partition(IReadOnlyList<LegalEntity> records)
@@ -94,74 +95,35 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         return (valid, skipped);
     }
 
-    private static HashSet<string> EnumerateDocs(LegalEntity le)
-    {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        Maybe(set, le.PanDocument);
-        Maybe(set, le.TinGstnDocument);
-        Maybe(set, le.RegisteredAddressDocument);
-        Maybe(set, le.PrincipalAddressDocument);
-        foreach (var p in le.Proofs)
-        {
-            Maybe(set, p.CertificateOfIncorporation);
-            Maybe(set, p.MemorandumAndArticles);
-            Maybe(set, p.ResolutionBoardPoA);
-            Maybe(set, p.NamesSeniorManagement);
-            Maybe(set, p.CertificateOfCommencement);
-            Maybe(set, p.OthersCompany);
-            Maybe(set, p.RegistrationCertificate);
-            Maybe(set, p.LlpinCertificate);
-            Maybe(set, p.PartnershipDeed);
-            Maybe(set, p.NamesAllPartners);
-            Maybe(set, p.OthersPartnership);
-            Maybe(set, p.TrustRegistrationCertificate);
-            Maybe(set, p.TrustDeed);
-            Maybe(set, p.NamesBeneficiariesTrustees);
-            Maybe(set, p.TrustPowerOfAttorney);
-            Maybe(set, p.OthersTrust);
-            Maybe(set, p.UnincorporatedRegistrationCertificate);
-            Maybe(set, p.ResolutionManagingBody);
-            Maybe(set, p.UnincorporatedPowerOfAttorney);
-            Maybe(set, p.InfoEstablishExistence);
-            Maybe(set, p.OthersUnincorporated);
-            Maybe(set, p.SupportingDocumentsPoi);
-            Maybe(set, p.OtherTypeRegistrationCertificate);
-            Maybe(set, p.OtherTypePowerOfAttorney);
-            Maybe(set, p.ActivityProof1);
-            Maybe(set, p.ActivityProof2);
-            Maybe(set, p.OthersOtherType);
-        }
-        Maybe(set, le.Other?.DeclarationDocument);
-        Maybe(set, le.Other?.ConsentDocument);
-        return set;
-    }
+    private static (long MasterId, string CustomerId, IReadOnlySet<string> References) Describe(LegalEntity record)
+        => (record.MasterRecordId, record.CustomerId, DocumentReferences.For(record));
 
     private static string FormatValidationFailures(IEnumerable<SkippedRecord> skipped) =>
         string.Join(" ", skipped.Select(s =>
             $"{s.CustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
 
-    private static void Maybe(HashSet<string> set, string? doc)
-    {
-        if (!string.IsNullOrWhiteSpace(doc)) set.Add(doc);
-    }
-
-    private static void ApplyCustomerSizeLimits(List<LegalEntity> valid, List<SkippedRecord> skipped, string docDir)
+    private static void ApplyDocumentChecks(List<LegalEntity> valid, List<SkippedRecord> skipped,
+        BatchDocumentPlanner plan, IReadOnlyDictionary<long, List<string>> missing)
     {
         foreach (var record in valid.ToList())
         {
-            var documents = EnumerateDocs(record);
+            var documents = DocumentReferences.For(record);
             var unsafeDocument = documents.FirstOrDefault(doc => !IsSafeDocumentName(doc));
-            if (unsafeDocument is not null)
+            var missingFiles = missing.GetValueOrDefault(record.MasterRecordId);
+            if (unsafeDocument is not null || missingFiles is { Count: > 0 })
             {
                 valid.Remove(record);
+                var value = unsafeDocument ?? string.Join(", ", missingFiles!);
+                var documentMessage = unsafeDocument is not null
+                    ? "A supporting document must be a PDF, JPG or JPEG file name without a directory path."
+                    : $"The following supporting documents have not been imported: {value}.";
                 skipped.Add(new SkippedRecord(record.CustomerId, record.EntityName,
-                    [new ValidationError(null, "DOC", null, "Supporting documents", unsafeDocument, null,
-                        "A supporting document must be a PDF, JPG or JPEG file name without a directory path.")]));
+                    [new ValidationError(null, "DOC", null, "Supporting documents", value, null, documentMessage)]));
                 continue;
             }
-            var total = documents.Sum(doc => ExistingOrPlaceholderLength(docDir, doc));
+            var total = documents.Sum(doc => plan.Get(record.MasterRecordId, doc).ByteLength);
             var oversizedSmallDocument = SmallDocuments(record)
-                .FirstOrDefault(doc => ExistingOrPlaceholderLength(docDir, doc) > CkycRecords.MaxLegalSmallDocumentBytes);
+                .FirstOrDefault(doc => plan.Get(record.MasterRecordId, doc).ByteLength > CkycRecords.MaxLegalSmallDocumentBytes);
             if (total <= CkycRecords.MaxLegalEntityBytesPerCustomer && oversizedSmallDocument is null) continue;
 
             valid.Remove(record);
@@ -178,12 +140,6 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         foreach (var value in new[] { record.PanDocument, record.TinGstnDocument,
                      record.RegisteredAddressDocument, record.PrincipalAddressDocument })
             if (!string.IsNullOrWhiteSpace(value)) yield return value;
-    }
-
-    private static long ExistingOrPlaceholderLength(string docDir, string document)
-    {
-        var path = Path.Combine(docDir, document);
-        return File.Exists(path) ? new FileInfo(path).Length : 4L;
     }
 
     private static bool IsSafeDocumentName(string document) =>

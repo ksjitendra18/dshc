@@ -231,8 +231,16 @@ defaults, so a minimal input still produces a batch. `build-zip` batches current
 records, so a freshly inserted record is batched on its own even when older records are
 already `FvuPassed`.
 
-> Keep values FVU-valid: country code `IN`, dates `DD-MM-YYYY`, a 20-character search key,
-> and an existing referencing document file in `support_docs`.
+Keep values FVU-valid: country code `IN`, dates `DD-MM-YYYY`, and a 20-character search key.
+After inserting the record, import every referenced document from a staging directory:
+
+```powershell
+& $exe documents import --customer-id CUST202608240099 --dir .\staging\CUST202608240099
+```
+
+The command accepts safe PDF/JPG/JPEG basenames, validates their signatures and size limits,
+and stores their bytes in SQLite. `build-zip` recreates `support_docs` from the database;
+manually placing source documents in the batch output directory is no longer required.
 
 ---
 

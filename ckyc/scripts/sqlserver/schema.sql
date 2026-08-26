@@ -141,6 +141,7 @@ CREATE TABLE kyc_record_40 (
     PermDigipin                NVARCHAR(10),
     PermSupportedDocument      NVARCHAR(1),
     PermMatchOvd               NVARCHAR(1),
+    CurrSameAsPermanent        NVARCHAR(1),
     CurrLine1                  NVARCHAR(60),
     CurrLine2                  NVARCHAR(60),
     CurrLine3                  NVARCHAR(60),
@@ -152,7 +153,26 @@ CREATE TABLE kyc_record_40 (
     CurrPinOthers              NVARCHAR(6),
     CurrDigipin                NVARCHAR(10),
     CurrSupportedDocument      NVARCHAR(1),
-    CurrMatchOvd               NVARCHAR(1)
+    CurrMatchOvd               NVARCHAR(1),
+    CurrProofOfAddress         NVARCHAR(1),
+    CurrProofOfAddressType     NVARCHAR(1),
+    CurrLengthOfAadhaar        NVARCHAR(1),
+    CurrIdNumber               NVARCHAR(100),
+    CurrAadhaarVerification    NVARCHAR(1),
+    CurrOvdExpiryDate          NVARCHAR(10),
+    CurrDeemedPoa              NVARCHAR(2),
+    CurrDeemedPoaVerified      NVARCHAR(1),
+    CurrCertifiedCopy          NVARCHAR(1),
+    CurrEquivalentEDoc         NVARCHAR(1),
+    CurrDigiLockerVerified     NVARCHAR(1),
+    CurrRemoteGeoTagging       NVARCHAR(1),
+    CurrAddressExactlyMatch    NVARCHAR(50),
+    CurrPositiveVerification   NVARCHAR(1),
+    CurrPhysicalThirdParty     NVARCHAR(1),
+    CurrPhysicalReOfficial     NVARCHAR(1),
+    CurrPresenceInRepository   NVARCHAR(1),
+    CurrForeignGovDocument     NVARCHAR(125),
+    CurrCopyOfOvd              NVARCHAR(125)
 );
 GO
 
@@ -689,4 +709,35 @@ CREATE TABLE download_response_artifact (
     CreatedAt              DATETIME2
 );
 CREATE INDEX ix_download_response_artifact_file ON download_response_artifact (DownloadResponseFileId);
+GO
+
+CREATE TABLE file_content (
+    Id          BIGINT IDENTITY(1,1) PRIMARY KEY,
+    Sha256      CHAR(64) NOT NULL,
+    Content     VARBINARY(MAX) NOT NULL,
+    ByteLength  BIGINT NOT NULL,
+    CreatedAt   DATETIME2 NOT NULL,
+    CONSTRAINT uq_file_content_sha256 UNIQUE (Sha256),
+    CONSTRAINT ck_file_content_length CHECK (ByteLength > 0)
+);
+GO
+
+CREATE TABLE customer_document (
+    Id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId      BIGINT NOT NULL,
+    FileContentId       BIGINT NOT NULL,
+    OriginalFileName    NVARCHAR(255) NOT NULL,
+    CanonicalFileName   NVARCHAR(255) NOT NULL,
+    MediaType           NVARCHAR(100) NOT NULL,
+    DocumentKind        NVARCHAR(50),
+    SourceType          NVARCHAR(30) NOT NULL,
+    SourceReference     NVARCHAR(500),
+    CreatedAt           DATETIME2 NOT NULL,
+    UpdatedAt           DATETIME2 NOT NULL,
+    CONSTRAINT fk_customer_document_master FOREIGN KEY (MasterRecordId) REFERENCES master_record(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_customer_document_content FOREIGN KEY (FileContentId) REFERENCES file_content(Id),
+    CONSTRAINT uq_customer_document_name UNIQUE (MasterRecordId, CanonicalFileName)
+);
+CREATE INDEX ix_customer_document_master ON customer_document (MasterRecordId);
+CREATE INDEX ix_customer_document_content ON customer_document (FileContentId);
 GO

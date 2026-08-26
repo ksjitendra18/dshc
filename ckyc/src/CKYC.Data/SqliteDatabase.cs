@@ -48,6 +48,7 @@ public sealed class SqliteDatabase : ICkycDatabase, IDisposable
         ExecutePragma(conn, "journal_mode=WAL");
         ExecutePragma(conn, "synchronous=NORMAL");
         ExecutePragma(conn, "busy_timeout=5000");
+        ExecutePragma(conn, "foreign_keys=ON");
         // -20000 = ~20 MB cache; the pipeline reads/writes few, wide rows.
         ExecutePragma(conn, "cache_size=-20000");
         ExecutePragma(conn, "temp_store=MEMORY");

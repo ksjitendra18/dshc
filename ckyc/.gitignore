@@ -12,3 +12,4 @@ runtime/
 
 # NuGet
 *.nupkg
+staging/*

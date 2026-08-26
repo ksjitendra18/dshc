@@ -12,6 +12,7 @@ CKYCProcessor.exe crm serve      # 2. dummy CRM API         (replace with produc
 CKYCProcessor.exe store          # 3. CRM -> record tables  (with simulated error saving)
 CKYCProcessor.exe retry          #    retry failed records (exponential backoff, max 3 tries)
 CKYCProcessor.exe reattempt      #    re-push a single rejected record after a backend DB fix
+CKYCProcessor.exe documents import --customer-id <id> --dir <path> # supporting files -> database
 CKYCProcessor.exe build-zip      # 4. saved records -> .UPL file + zip
 CKYCProcessor.exe fvu            # 5. batch -> FVU -> processed zip + hash
 CKYCProcessor.exe response read  # 6. CERSAI reply (.UPL.RESm) -> response table + master summary
@@ -51,9 +52,10 @@ and is reached over HTTP, so swapping in the production CRM is a one-line config
 
 ## Data model
 
-The schema uses **length-only** column definitions (plus an identity primary key) and
-deliberately **no NOT NULL / UNIQUE / CHECK / FK constraints** — as requested ("length
-validation yes, other validation no"). All tables are created on startup.
+The CKYC record tables retain their original length-only convention. The binary-document
+tables additionally enforce required fields, content-hash/name uniqueness, positive length,
+and foreign keys so document content cannot be orphaned or ambiguously assigned. All tables
+are created on startup.
 
 - `master_record` — step 1: daily customer ids + a **single current-stage** `Status`
   (Pending → CrmFetched → Saved → Batched → Uploaded → ResponseRead → Reconciled/Rejected),
@@ -82,6 +84,9 @@ validation yes, other validation no"). All tables are created on startup.
 - `kyc_record_50` — contact (record type 50).
 - `kyc_record_60` — related party (record type 60).
 - `kyc_record_70` — other details & attestation (record type 70).
+- `file_content` — globally SHA-256-deduplicated PDF/JPEG bytes.
+- `customer_document` — a customer/master-record filename mapped to content, MIME type,
+  source metadata, and import timestamps.
 - `batch`, `fvu_run` — audit trail of generated batches and FVU runs.
 - `search_request` — vendor individual-search request fields plus the pending/processing/
   generated/failed flag, claim token, output filename and record-20 line number.
@@ -92,6 +97,22 @@ validation yes, other validation no"). All tables are created on startup.
 
 The SQL Server equivalent is in `scripts/sqlserver/schema.sql` (set `database.provider`
 = `sqlserver` and supply a matching connection string).
+
+### Supporting documents
+
+Document filenames remain in the CKYC record fields, but their bytes are imported separately
+from CRM data and stored in the database:
+
+```powershell
+CKYCProcessor.exe documents import --customer-id CUST202608240099 --dir .\staging\CUST202608240099
+CKYCProcessor.exe build-zip
+```
+
+The staging directory may be populated manually or by an SFTP/database-source adapter. Only
+referenced PDF/JPG/JPEG basenames are imported; missing references prevent that customer from
+being batched. `build-zip` materializes database bytes into its generated `support_docs`
+folder. If different customers use the same filename for different content, batch-only names
+are generated deterministically without changing stored record fields.
 
 ### Individual search process
 

@@ -77,6 +77,7 @@ public sealed class DummyCrmDataProvider
                 Country = "IN", State = "MH", District = "225", City = "Bhayandar",
                 PinCode = "401106", AddressSupportedWithDocument = "N", AddressMatchWithOvd = "N",
             },
+            CurrentAddressSameAsPermanent = "N",
             CurrentAddress = new AddressDetails
             {
                 Line1 = "ABC", Line2 = "CCC", Line3 = "CCC",
@@ -84,6 +85,7 @@ public sealed class DummyCrmDataProvider
                 PinCode = "401107", AddressSupportedWithDocument = "N", AddressMatchWithOvd = "N",
                 ProofOfAddress = "1", ProofOfAddressType = "E", LengthOfAadhaar = "A",
                 IdNumber = StableDigits(customerId + "I", 4), ModeOfAadhaarVerification = "B",
+                CertifiedCopyWithOriginal = "Y", EquivalentEDoc = "N", VerifiedFromDigiLocker = "N",
                 CopyOfOvd = "AdhaarAP.jpg", RemoteGeoTagging = "Y", AddressExactlyMatch = "Exact Match",
                 PositiveVerification = "Y", PhysicalVerificationByThirdParty = "Y",
                 PhysicalVerificationByReOfficial = "Y", PresenceInRepository = "Y",

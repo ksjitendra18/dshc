@@ -21,14 +21,16 @@ public sealed class CkycBatchGenerator : IBatchGenerator
 {
     private readonly BatchSettings _batch;
     private readonly IFileHasher _hasher;
+    private readonly IDocumentStore _documents;
 
-    public CkycBatchGenerator(BatchSettings batch, IFileHasher hasher)
+    public CkycBatchGenerator(BatchSettings batch, IFileHasher hasher, IDocumentStore documents)
     {
         _batch = batch;
         _hasher = hasher;
+        _documents = documents;
     }
 
-    public Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate, CancellationToken ct = default)
+    public async Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate, CancellationToken ct = default)
     {
         if (records.Count == 0)
             throw new InvalidOperationException("No records supplied to the batch generator.");
@@ -42,6 +44,16 @@ public sealed class CkycBatchGenerator : IBatchGenerator
                 $"All {records.Count} record(s) failed validation — no batch was produced. " +
                 $"{FormatValidationFailures(skipped)}");
 
+        var descriptors = valid.Select(Describe).ToList();
+        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        ApplyDocumentChecks(valid, skipped, documentPlan, missing);
+        if (valid.Count == 0)
+            throw new InvalidOperationException($"All {records.Count} record(s) failed validation or document checks. " + FormatValidationFailures(skipped));
+
+        // Re-plan after exclusions so filename collision allocation depends only on emitted records.
+        descriptors = valid.Select(Describe).ToList();
+        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+
         var fileName = CkycFileName.Build(_batch.ClientType, _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);
 
@@ -51,32 +63,21 @@ public sealed class CkycBatchGenerator : IBatchGenerator
         Directory.CreateDirectory(uploadDir);
         Directory.CreateDirectory(docDir);
 
-        ApplyCustomerSizeLimit(valid, skipped, docDir);
-        if (valid.Count == 0)
-            throw new InvalidOperationException($"All {records.Count} record(s) failed validation or document checks. " +
-                FormatValidationFailures(skipped));
-
-        var writer = new CkycUploadWriter(_batch);
+        var writer = new CkycUploadWriter(_batch, documentPlan.Map);
         var content = writer.Write(valid, businessDate);
         var record20Lines = CkycUploadWriter.ComputeRecord20Lines(valid);
 
         var uploadPath = Path.Combine(uploadDir, fileName);
         File.WriteAllText(uploadPath, content, new UTF8Encoding(false));
 
-        // Create the supporting-document placeholders referenced by the records so the
-        // FVU's SupportDocPath folder check is satisfied.
-        foreach (var r in valid)
-            foreach (var doc in EnumerateDocs(r))
-            {
-                var path = Path.Combine(docDir, doc);
-                if (!File.Exists(path)) File.WriteAllBytes(path, new byte[] { 0x25, 0x50, 0x44, 0x46 }); // "%PDF"
-            }
+        await documentPlan.MaterializeAsync(descriptors, docDir, ct);
 
         var zipPath = Path.Combine(batchDir, $"{batchKey}.zip");
         if (File.Exists(zipPath)) File.Delete(zipPath);
-        CreateArchive(uploadPath, docDir, valid.SelectMany(EnumerateDocs), zipPath);
+        CreateArchive(uploadPath, docDir,
+            valid.SelectMany(r => DocumentReferences.For(r).Select(name => documentPlan.Map(r.CustomerId, name)!)), zipPath);
 
-        return Task.FromResult(new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines));
+        return new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines);
     }
 
     /// <summary>Splits the supplied records into those that pass and those that fail validation.</summary>
@@ -108,39 +109,29 @@ public sealed class CkycBatchGenerator : IBatchGenerator
         string.Join(" ", skipped.Select(s =>
             $"{s.CustomerId}: {string.Join("; ", s.Errors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}"))}"));
 
-    private static HashSet<string> EnumerateDocs(Individual r)
-    {
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        Maybe(set, r.PhotoOfIndividual);
-        Maybe(set, r.PanDocument);
-        foreach (var p in r.Proofs) Maybe(set, p.CopyOfOvd);
-        Maybe(set, r.PermanentAddress?.CopyOfOvd);
-        Maybe(set, r.CurrentAddress?.CopyOfOvd);
-        Maybe(set, r.Other?.DeclarationDocument);
-        Maybe(set, r.Other?.ClientConsent);
-        return set;
-    }
+    private static (long MasterId, string CustomerId, IReadOnlySet<string> References) Describe(Individual record)
+        => (record.MasterRecordId, record.CustomerId, DocumentReferences.For(record));
 
-    private static void Maybe(HashSet<string> set, string? doc)
-    {
-        if (!string.IsNullOrWhiteSpace(doc)) set.Add(doc);
-    }
-
-    private static void ApplyCustomerSizeLimit(List<Individual> valid, List<SkippedRecord> skipped, string docDir)
+    private static void ApplyDocumentChecks(List<Individual> valid, List<SkippedRecord> skipped,
+        BatchDocumentPlanner plan, IReadOnlyDictionary<long, List<string>> missing)
     {
         foreach (var record in valid.ToList())
         {
-            var documents = EnumerateDocs(record);
+            var documents = DocumentReferences.For(record);
             var unsafeDocument = documents.FirstOrDefault(doc => !IsSafeDocumentName(doc));
-            if (unsafeDocument is not null)
+            var missingFiles = missing.GetValueOrDefault(record.MasterRecordId);
+            if (unsafeDocument is not null || missingFiles is { Count: > 0 })
             {
                 valid.Remove(record);
+                var value = unsafeDocument ?? string.Join(", ", missingFiles!);
+                var message = unsafeDocument is not null
+                    ? "A supporting document must be a PDF, JPG or JPEG file name without a directory path."
+                    : $"The following supporting documents have not been imported: {value}.";
                 skipped.Add(new SkippedRecord(record.CustomerId, $"{record.Name.FirstName} {record.Name.LastName}".Trim(),
-                    [new ValidationError(null, "DOC", null, "Supporting documents", unsafeDocument, null,
-                        "A supporting document must be a PDF, JPG or JPEG file name without a directory path.")]));
+                    [new ValidationError(null, "DOC", null, "Supporting documents", value, null, message)]));
                 continue;
             }
-            var bytes = documents.Sum(doc => ExistingOrPlaceholderLength(docDir, doc));
+            var bytes = documents.Sum(doc => plan.Get(record.MasterRecordId, doc).ByteLength);
             if (bytes <= CkycRecords.MaxIndividualBytesPerCustomer) continue;
             valid.Remove(record);
             skipped.Add(new SkippedRecord(record.CustomerId, $"{record.Name.FirstName} {record.Name.LastName}".Trim(),
@@ -149,22 +140,16 @@ public sealed class CkycBatchGenerator : IBatchGenerator
         }
     }
 
-    private static long ExistingOrPlaceholderLength(string docDir, string document)
-    {
-        var path = Path.Combine(docDir, document);
-        return File.Exists(path) ? new FileInfo(path).Length : 4L;
-    }
-
     private static bool IsSafeDocumentName(string document) =>
         !Path.IsPathRooted(document)
         && string.Equals(Path.GetFileName(document), document, StringComparison.Ordinal)
         && new[] { ".pdf", ".jpg", ".jpeg" }.Contains(Path.GetExtension(document), StringComparer.OrdinalIgnoreCase);
 
-    private static void CreateArchive(string uploadPath, string docDir, IEnumerable<string> documents, string zipPath)
+    private static void CreateArchive(string uploadPath, string docDir, IEnumerable<string> batchDocuments, string zipPath)
     {
         using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
         archive.CreateEntryFromFile(uploadPath, $"upload/{Path.GetFileName(uploadPath)}", CompressionLevel.Optimal);
-        foreach (var document in documents.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var document in batchDocuments.Distinct(StringComparer.OrdinalIgnoreCase))
             archive.CreateEntryFromFile(Path.Combine(docDir, document), $"upload/support_docs/{document}", CompressionLevel.Optimal);
     }
 }

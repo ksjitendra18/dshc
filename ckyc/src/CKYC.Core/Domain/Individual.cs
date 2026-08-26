@@ -41,7 +41,7 @@ public sealed class Individual
     public string? GenderMatchWithOvd { get; set; }        // Y/N (CM: mandatory when GenderProvidedInOvd = Y)
     public string? Form97Provided { get; set; }            // Form 97 (erstwhile Form 60) Y/N — one of PAN/Form60/Form61 required
     public string? Form61Provided { get; set; }            // Y/N
-    public string? PanDocument { get; set; }               // supporting document file name (CM: when PAN provided)
+    public string? PanDocument { get; set; }               // optional PAN/Form 60/Form 61 document file name
     public string? OtherTypeOfImpairment { get; set; }     // CM: when Type of Impairment = 21 (Others)
     public string? DisabilityReferenceNumber { get; set; } // Certificate/UDID number (CM: when PwD = Y)
     public string? PermanentDisability { get; set; }       // Y/N (CM: when PwD = Y)
@@ -54,6 +54,11 @@ public sealed class Individual
 
     // ---- Record 40 : Addresses ----
     public AddressDetails? PermanentAddress { get; set; }
+    /// <summary>
+    /// CKYC record-40 "Same as permanent address" flag (Y/N). When Y, current-address
+    /// text and proof fields are not applicable; the mandatory verification flags remain.
+    /// </summary>
+    public string? CurrentAddressSameAsPermanent { get; set; }
     public AddressDetails? CurrentAddress { get; set; }
 
     // ---- Record 50 : Contact ----

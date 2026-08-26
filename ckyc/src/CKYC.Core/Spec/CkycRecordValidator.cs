@@ -29,7 +29,7 @@ public sealed class CkycRecordValidator
     private static readonly Regex DigitsPattern = new(@"^[0-9]+$", RegexOptions.CultureInvariant);
 
     private static bool Is(string? value, string expected) =>
-        string.Equals(value?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
+        string.Equals(value?.Trim(), expected.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Returns every rule violation for the record, or an empty list when it is valid.</summary>
     public static IReadOnlyList<ValidationError> Validate(Individual r)
@@ -346,12 +346,29 @@ public sealed class CkycRecordValidator
                 addressMatchRequired: r.Proofs.Any(p => !Is(p.OvdType, "H")));
         }
 
+        RequireAllowed(errors, Record40, "Same as permanent address", r.CurrentAddressSameAsPermanent, ["Y", "N"]);
+
         var current = r.CurrentAddress;
-        if (current is not null && !SameAddress(r.PermanentAddress, current))
+        var sameAsPermanent = Is(r.CurrentAddressSameAsPermanent, "Y");
+        if (current is null)
         {
-            ValidateAddressBlock(current, "Current Address", Record40, errors,
-                supportRequired: false, addressMatchRequired: false);
-            ValidateCurrentAddressProof(r, current, errors);
+            ValidateCurrentAddressVerification(r, null, errors, required: !sameAsPermanent);
+            if (Is(r.CurrentAddressSameAsPermanent, "N"))
+                errors.Add(Error(Record40, null, "Current Address", null,
+                    "Current Address is mandatory when Same as permanent address is N."));
+        }
+        else
+        {
+            // The writer supplies Y for missing M verification flags when the address is the
+            // same. This keeps legacy rows valid while still rejecting invalid nonblank values.
+            ValidateCurrentAddressVerification(r, current, errors, required: !sameAsPermanent);
+
+            if (Is(r.CurrentAddressSameAsPermanent, "N"))
+            {
+                ValidateAddressBlock(current, "Current Address", Record40, errors,
+                    supportRequired: false, addressMatchRequired: false);
+                ValidateCurrentAddressProof(current, errors);
+            }
         }
 
         return errors;
@@ -397,7 +414,7 @@ public sealed class CkycRecordValidator
                 $"{section} Address match with OVD is mandatory."));
     }
 
-    private static void ValidateCurrentAddressProof(Individual r, AddressDetails a, List<ValidationError> errors)
+    private static void ValidateCurrentAddressProof(AddressDetails a, List<ValidationError> errors)
     {
         if (!Is(a.Country, "IN"))
         {
@@ -430,6 +447,11 @@ public sealed class CkycRecordValidator
             RequireAllowed(errors, Record40, "Certified copy verified with original OVD", a.CertifiedCopyWithOriginal, ["Y", "N"]);
             RequireAllowed(errors, Record40, "Document verified from DigiLocker", a.VerifiedFromDigiLocker, ["Y", "N"]);
             RequireAllowed(errors, Record40, "Equivalent e-doc", a.EquivalentEDoc, ["Y", "N"]);
+            if (!Is(a.CertifiedCopyWithOriginal, "Y")
+                && !Is(a.VerifiedFromDigiLocker, "Y")
+                && !Is(a.EquivalentEDoc, "Y"))
+                errors.Add(Error(Record40, null, "OVD verification method", null,
+                    "At least one of certified copy, DigiLocker verification, or equivalent e-document must be Y."));
             Require(errors, Record40, "Address exactly match with Deemed PoA / OVD", a.AddressExactlyMatch,
                 "Address exactly match with Deemed PoA / OVD is mandatory for an OVD other than H.");
             Require(errors, Record40, "Copy of OVD", a.CopyOfOvd,
@@ -446,14 +468,32 @@ public sealed class CkycRecordValidator
                 "Address exactly match with Deemed PoA / OVD is mandatory for Deemed PoA.");
         }
 
-        RequireAllowed(errors, Record40, "Remote Geo Tagging", a.RemoteGeoTagging, ["Y", "N"]);
-        RequireAllowed(errors, Record40, "Positive verification of current address", a.PositiveVerification, ["Y", "N"]);
-        RequireAllowed(errors, Record40, "Physical verification by third party", a.PhysicalVerificationByThirdParty, ["Y", "N"]);
-        RequireAllowed(errors, Record40, "Physical verification by RE official", a.PhysicalVerificationByReOfficial, ["Y", "N"]);
+    }
+
+    private static void ValidateCurrentAddressVerification(
+        Individual r,
+        AddressDetails? current,
+        List<ValidationError> errors,
+        bool required)
+    {
+        if (required)
+        {
+            RequireAllowed(errors, Record40, "Remote Geo Tagging", current?.RemoteGeoTagging, ["Y", "N"]);
+            RequireAllowed(errors, Record40, "Positive verification of current address", current?.PositiveVerification, ["Y", "N"]);
+            RequireAllowed(errors, Record40, "Physical verification by third party", current?.PhysicalVerificationByThirdParty, ["Y", "N"]);
+            RequireAllowed(errors, Record40, "Physical verification by RE official", current?.PhysicalVerificationByReOfficial, ["Y", "N"]);
+        }
+        else
+        {
+            OptionalAllowed(errors, Record40, "Remote Geo Tagging", current?.RemoteGeoTagging, ["Y", "N"]);
+            OptionalAllowed(errors, Record40, "Positive verification of current address", current?.PositiveVerification, ["Y", "N"]);
+            OptionalAllowed(errors, Record40, "Physical verification by third party", current?.PhysicalVerificationByThirdParty, ["Y", "N"]);
+            OptionalAllowed(errors, Record40, "Physical verification by RE official", current?.PhysicalVerificationByReOfficial, ["Y", "N"]);
+        }
 
         var foreign = !Is(r.Nationality, "IN") || Is(ResidentialStatusValue(r.ResidentialStatus), "D");
         if (foreign)
-            Require(errors, Record40, "Foreign jurisdiction / embassy document", a.ForeignGovernmentDocument,
+            Require(errors, Record40, "Foreign jurisdiction / embassy document", current?.ForeignGovernmentDocument,
                 "A foreign government or embassy document is mandatory for a non-Indian national or foreign national.");
     }
 
@@ -602,14 +642,6 @@ public sealed class CkycRecordValidator
         "FOREIGNNATIONAL" or "FOREIGN NATIONAL" => "D",
         _ => value,
     };
-
-    private static bool SameAddress(AddressDetails? a, AddressDetails? b)
-    {
-        if (a is null || b is null) return a is null && b is null;
-        return Is(a.Line1, b.Line1) && Is(a.Line2, b.Line2) && Is(a.Line3, b.Line3)
-            && Is(a.Country, b.Country) && Is(a.State, b.State) && Is(a.District, b.District)
-            && Is(a.City, b.City) && Is(a.PinCode, b.PinCode);
-    }
 
     private static ValidationError Error(string recordType, string? line, string field, string? value, string description)
         => new(null, recordType, line, field, value, null, description);

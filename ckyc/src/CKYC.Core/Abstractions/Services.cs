@@ -94,6 +94,14 @@ public interface ILegalEntityRepository
     Task<IReadOnlyList<LegalEntity>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
 }
 
+/// <summary>Persists and retrieves customer supporting documents independently of their source.</summary>
+public interface IDocumentStore
+{
+    Task<CustomerDocument> ImportAsync(DocumentImport import, Stream content, CancellationToken ct = default);
+    Task<CustomerDocument?> GetAsync(long masterRecordId, string fileName, CancellationToken ct = default);
+    Task<IReadOnlyList<CustomerDocument>> GetByMasterRecordIdsAsync(IReadOnlyCollection<long> masterRecordIds, CancellationToken ct = default);
+}
+
 /// <summary>Dummy CRM API client (step 2).</summary>
 public interface ICrmApiClient
 {

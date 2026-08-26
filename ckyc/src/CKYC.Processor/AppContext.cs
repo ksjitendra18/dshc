@@ -26,6 +26,7 @@ public sealed class AppContext
         Journal = new BatchJournal(Database);
         Search = new SearchRepository(Database);
         Downloads = new DownloadRepository(Database);
+        Documents = new SqliteDocumentStore(Database);
 
         CrmData = new DummyCrmDataProvider();
         CrmLegalEntities = new DummyCrmLegalEntityProvider();
@@ -33,8 +34,8 @@ public sealed class AppContext
         CrmServer = new CrmServer(CrmData, CustomerIds);
 
         Hasher = new FileHasher();
-        BatchGenerator = new CkycBatchGenerator(settings.Batch, Hasher);
-        LegalEntityBatchGenerator = new CkycLegalEntityBatchGenerator(settings.Batch, Hasher);
+        BatchGenerator = new CkycBatchGenerator(settings.Batch, Hasher, Documents);
+        LegalEntityBatchGenerator = new CkycLegalEntityBatchGenerator(settings.Batch, Hasher, Documents);
         SearchFileWriter = new CkycSearchWriter(settings.Search);
         Fvu = new FvuRunner(settings.Fvu, Hasher);
     }
@@ -48,6 +49,7 @@ public sealed class AppContext
     public IBatchJournal Journal { get; }
     public ISearchRepository Search { get; }
     public IDownloadRepository Downloads { get; }
+    public IDocumentStore Documents { get; }
 
     public DummyCrmDataProvider CrmData { get; }
     public DummyCrmLegalEntityProvider CrmLegalEntities { get; }

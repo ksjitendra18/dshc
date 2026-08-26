@@ -20,8 +20,13 @@ namespace CKYC.Files;
 public sealed class CkycUploadWriter
 {
     private readonly BatchSettings _batch;
+    private readonly Func<string, string?, string?> _documentName;
 
-    public CkycUploadWriter(BatchSettings batch) => _batch = batch;
+    public CkycUploadWriter(BatchSettings batch, Func<string, string?, string?>? documentName = null)
+    {
+        _batch = batch;
+        _documentName = documentName ?? ((_, name) => name);
+    }
 
     public string Write(IReadOnlyList<Individual> records, DateOnly businessDate)
     {
@@ -37,7 +42,7 @@ public sealed class CkycUploadWriter
             sb.AppendLine(BuildRecord20(record, r20Line));
 
             foreach (var proof in record.Proofs)
-                sb.AppendLine(BuildRecord30(proof, r20Line, lineNo++));
+                sb.AppendLine(BuildRecord30(record.CustomerId, proof, r20Line, lineNo++));
 
             if (record.PermanentAddress is not null || record.CurrentAddress is not null)
                 sb.AppendLine(BuildRecord40(record, r20Line, lineNo++));
@@ -92,7 +97,7 @@ public sealed class CkycUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord20(Individual r, int lineNo)
+    private string BuildRecord20(Individual r, int lineNo)
     {
         var f = new string?[56];
         f[0] = CkycRecords.Demographic;
@@ -168,9 +173,9 @@ public sealed class CkycUploadWriter
         f[47] = pwD ? Coalesce(r.DifferentlyAbledSupportedByDocument, "Y") : "";
 
         // PAN attachment is optional in the create format, including when PAN is supplied.
-        f[48] = r.PanDocument;
+        f[48] = Doc(r.CustomerId, r.PanDocument);
 
-        f[49] = r.PhotoOfIndividual;
+        f[49] = Doc(r.CustomerId, r.PhotoOfIndividual);
 
         // Detail-record counts must match the records actually emitted below.
         f[50] = r.Proofs.Count.ToString();                                    // record 30
@@ -182,7 +187,7 @@ public sealed class CkycUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord30(ProofOfIdentity p, int r20Line, int lineNo)
+    private string BuildRecord30(string customerId, ProofOfIdentity p, int r20Line, int lineNo)
     {
         var f = new string?[22];
         f[0] = CkycRecords.Proof;
@@ -238,12 +243,12 @@ public sealed class CkycUploadWriter
         f[19] = ovd == "E" && Is(p.ModeOfAadhaarVerification, "B") ? Coalesce(p.EkycDataFromUidai, "Y") : "";
 
         // Copy of OVD (CM) — applicable for all OVD types except "H".
-        f[20] = ovd != "H" ? Coalesce(p.CopyOfOvd, "AdhaarAP.jpg") : "";
+        f[20] = ovd != "H" ? Doc(customerId, Coalesce(p.CopyOfOvd, "AdhaarAP.jpg")) : "";
 
         return string.Join('|', f);
     }
 
-    private static string BuildRecord40(Individual r, int r20Line, int lineNo)
+    private string BuildRecord40(Individual r, int r20Line, int lineNo)
     {
         var f = new string?[46];
         f[0] = CkycRecords.Address;
@@ -265,14 +270,11 @@ public sealed class CkycUploadWriter
             f[6] = "IN"; f[13] = "Y"; f[14] = "Y";
         }
 
-        // "Same as permanent address" (M) — Y when the current address equals the permanent address,
-        // or when no current address was supplied. Per the create spec, when Y the current-address
-        // text and proof-of-address details are omitted, but the record-40 mandatory verification
-        // fields (Remote Geo Tagging, Positive verification, Physical verification x2) are still
-        // required and are emitted as Y.
+        // "Same as permanent address" is an explicit M field in the create format. Do not infer
+        // it by comparing addresses: when Y, current-address text/proof fields must stay empty.
         var curr = r.CurrentAddress;
-        var sameAsPermanent = curr is null || SameAddress(perm, curr);
-        f[15] = sameAsPermanent ? "Y" : "N";
+        var sameAsPermanent = Is(r.CurrentAddressSameAsPermanent, "Y");
+        f[15] = r.CurrentAddressSameAsPermanent;
 
         // These four fields are mandatory even when no distinct current-address block is needed.
         f[37] = Coalesce(curr?.RemoteGeoTagging, "Y");
@@ -295,7 +297,7 @@ public sealed class CkycUploadWriter
                 // Copy of OVD (field 44) must reference an existing file (resolved from record-30).
                 var copyOfOvd = r.Proofs.Count > 0 ? r.Proofs[0].CopyOfOvd : null;
                 if (string.IsNullOrWhiteSpace(copyOfOvd)) copyOfOvd = "AdhaarAP.jpg";
-                f[44] = copyOfOvd;
+                f[44] = Doc(r.CustomerId, copyOfOvd);
 
                 // Field 29 (ID number of the current-address proof) must match the record-30 OVD ID.
                 f[29] = r.Proofs.Count > 0 ? r.Proofs[0].IdNumber : null;
@@ -307,19 +309,6 @@ public sealed class CkycUploadWriter
         }
 
         return string.Join('|', f);
-    }
-
-    private static bool SameAddress(AddressDetails? a, AddressDetails? b)
-    {
-        if (a is null || b is null) return a is null && b is null;
-        return string.Equals(a.Line1, b.Line1, StringComparison.Ordinal)
-            && string.Equals(a.Line2, b.Line2, StringComparison.Ordinal)
-            && string.Equals(a.Line3, b.Line3, StringComparison.Ordinal)
-            && string.Equals(a.Country, b.Country, StringComparison.Ordinal)
-            && string.Equals(a.State, b.State, StringComparison.Ordinal)
-            && string.Equals(a.District, b.District, StringComparison.Ordinal)
-            && string.Equals(a.City, b.City, StringComparison.Ordinal)
-            && string.Equals(a.PinCode, b.PinCode, StringComparison.Ordinal);
     }
 
     private static void ResolveCurrentProof(string?[] f, AddressDetails curr, Individual r, int start)
@@ -410,7 +399,7 @@ public sealed class CkycUploadWriter
         return string.Join('|', f);
     }
 
-    private static string BuildRecord70(Individual r, int r20Line, int lineNo, DateOnly businessDate)
+    private string BuildRecord70(Individual r, int r20Line, int lineNo, DateOnly businessDate)
     {
         var o = r.Other!; // guaranteed non-null by the caller
         var f = new string?[23];
@@ -436,9 +425,9 @@ public sealed class CkycUploadWriter
 
         f[15] = o.InstitutionName;
         f[16] = o.InstitutionCode;
-        f[17] = o.DeclarationDocument;
+        f[17] = Doc(r.CustomerId, o.DeclarationDocument);
         f[18] = Coalesce(o.DeclarationFlag, "Y");
-        f[19] = o.ClientConsent;
+        f[19] = Doc(r.CustomerId, o.ClientConsent);
         f[20] = o.Place;
         f[21] = Coalesce(o.DeclarationDate, businessDate.ToString("dd-MM-yyyy"));
         return string.Join('|', f);
@@ -485,4 +474,6 @@ public sealed class CkycUploadWriter
 
     private static string Coalesce(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    private string? Doc(string customerId, string? value) => _documentName(customerId, value);
 }
