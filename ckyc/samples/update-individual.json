@@ -1,0 +1,49 @@
+[
+  {
+    "externalRequestId": "UPD-I-0001",
+    "customerId": "CUST202608240001",
+    "clientType": "I",
+    "ckycNumber": "12345678901234",
+
+    "nameFlg": "Y",
+    "nameTitle": "Mr",
+    "firstName": "Amrish",
+    "middleName": "",
+    "lastName": "Puri",
+    "nameMatchWithOvd": "Y",
+    "gender": "M",
+    "genderProvidedInOvd": "Y",
+    "genderMatchWithOvd": "Y",
+
+    "dobFlg": "Y",
+    "dateOfBirth": "22-06-1932",
+    "minor": "N",
+    "dobMatchWithOvd": "Y"
+  },
+  {
+    "externalRequestId": "UPD-I-0002",
+    "customerId": "CUST202608240002",
+    "clientType": "I",
+    "ckycNumber": "23456789012345",
+
+    "contactDetailsFlg": "Y",
+    "email": "amrita.new@example.com",
+    "countryCode": "+91",
+    "mobileNumber": "9876543210",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "N",
+
+    "permanentAddressFlg": "Y",
+    "permLine1": "12/B Rose Villa",
+    "permLine2": "MG Road",
+    "permLine3": "Near City Mall",
+    "permCountry": "IN",
+    "permState": "27",
+    "permDistrict": "519",
+    "permCity": "Mumbai",
+    "permPinCode": "400001",
+    "permSupportedWithDocument": "Y",
+    "permMatchWithOvd": "Exact Match"
+  }
+]

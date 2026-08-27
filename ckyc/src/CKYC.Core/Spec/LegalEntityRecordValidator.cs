@@ -20,6 +20,24 @@ public sealed class LegalEntityRecordValidator
         ["Director", "Promoter", "Karta", "Trustee", "Partner", "Court Appointment Official", "Proprietor",
          "Beneficiary", "Authorized Signatory", "Beneficial Owner", "Power of Attorney Holder", "Others"];
 
+    /// <summary>
+    /// Expected fourth PAN character per constitution code (FVU ERR_180 checks it, e.g. a
+    /// trust's PAN must have T in the fourth position). Constitutions without a known
+    /// character are not strictly checked.
+    /// </summary>
+    private static readonly Dictionary<string, char> ExpectedPanChars = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [LeConstitution.SoleProprietorship] = 'P',       // individual/proprietor
+        [LeConstitution.PartnershipFirm] = 'F',          // firm
+        [LeConstitution.Llp] = 'F',
+        [LeConstitution.Huf] = 'H',
+        [LeConstitution.PrivateLimitedCompany] = 'C',
+        [LeConstitution.PublicLimitedCompany] = 'C',
+        [LeConstitution.Section8Company] = 'C',
+        [LeConstitution.Trust] = 'T',
+        [LeConstitution.UnincorporatedAssociation] = 'A',
+    };
+
     public static IReadOnlyList<ValidationError> Validate(LegalEntity le)
     {
         var errors = new List<ValidationError>();
@@ -53,8 +71,8 @@ public sealed class LegalEntityRecordValidator
             or LeConstitution.PrivateLimitedCompany or LeConstitution.PublicLimitedCompany or LeConstitution.Section8Company;
         if (panMandatory && Empty(pan)) Add(e, R20, "PAN", le.Pan, "PAN is mandatory for partnership firms, LLPs and companies.");
         if (!Empty(pan) && !Pan.IsMatch(pan!)) Add(e, R20, "PAN", le.Pan, "PAN must match AAAAA9999A.");
-        if (!Empty(pan) && !Is(le.EntityConstitution, LeConstitution.SoleProprietorship) && pan![3] == 'P')
-            Add(e, R20, "PAN", le.Pan, "The fourth PAN character must not be P except for a sole proprietorship.");
+        if (!Empty(pan) && ExpectedPanChars.TryGetValue(le.EntityConstitution?.Trim().ToUpperInvariant() ?? "", out var expectedChar) && pan![3] != expectedChar)
+            Add(e, R20, "PAN", le.Pan, $"The fourth PAN character must be {expectedChar} for constitution type {le.EntityConstitution} (FVU ERR_180).");
         OptionalAllowed(e, R20, "Form 97", le.Form97, ["Y"]);
         if (Empty(pan) && !Is(le.Form97, "Y")) Add(e, R20, "Form 97", le.Form97, "Form 97 must be Y when PAN is not provided.");
         if (!Empty(pan)) RequiredAllowed(e, R20, "PAN Verified", le.PanVerified, ["Y", "N"]);
@@ -211,7 +229,7 @@ public sealed class LegalEntityRecordValidator
         if (le.Other is null) { Add(e, R70, "Other Details & Attestation", null, "Record type 70 is mandatory."); return; }
         var o = le.Other; OptionalText(e, R70, "Remarks", o.Remarks, 200);
         RequiredAllowed(e, R70, "Certified copies", o.CertifiedCopies, ["Y", "N"]); RequiredAllowed(e, R70, "Equivalent e-document", o.EquivalentEDoc, ["Y", "N"]); RequiredAllowed(e, R70, "Verification from DigiLocker", o.VerificationFromDigiLocker, ["Y", "N"]);
-        RequiredDate(e, R70, "Attestation date", o.AttestationDate, true); RequiredText(e, R70, "Employee Name", o.EmployeeName, 99); RequiredText(e, R70, "Employee Code", o.EmployeeCode, 50);
+        RequiredDate(e, R70, "Attestation date", o.AttestationDate, false); RequiredText(e, R70, "Employee Name", o.EmployeeName, 99); RequiredText(e, R70, "Employee Code", o.EmployeeCode, 50);
         RequiredText(e, R70, "Employee Designation", o.EmployeeDesignation, 50); RequiredText(e, R70, "Employee Branch", o.EmployeeBranch, 50); RequiredText(e, R70, "Employee CKYC ID", o.EmployeeCkycId, 14);
         if (!Empty(o.EmployeeCkycId) && (o.EmployeeCkycId.Length != 14 || !Digits.IsMatch(o.EmployeeCkycId))) Add(e, R70, "Employee CKYC ID", o.EmployeeCkycId, "Employee CKYC ID must contain exactly 14 digits.");
         RequiredText(e, R70, "Institution Name", o.InstitutionName, 99); RequiredText(e, R70, "Institution Code", o.InstitutionCode, 50);

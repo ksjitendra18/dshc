@@ -22,6 +22,10 @@ CKYCProcessor.exe search-load search_customer.json # search JSON -> pending requ
 CKYCProcessor.exe search-process --limit 1000      # atomically claim rows -> .SRC
 CKYCProcessor.exe search-fvu                        # validate latest .SRC -> .SRC.zip
 CKYCProcessor.exe search-response                   # .SRC.RESm / response ZIP -> response tables
+CKYCProcessor.exe update-load updates.json          # bulk-update JSON -> pending update_request rows
+CKYCProcessor.exe update-process --limit 1000       # claim per client type -> .UPD + support_docs zip
+CKYCProcessor.exe update-fvu                        # validate latest .UPD -> .UPD.zip
+CKYCProcessor.exe update-response                   # .UPD.RESm / response ZIP -> response tables
 CKYCProcessor.exe batch-find --customer <id>        # customer -> complete upload-batch history
 CKYCProcessor.exe download-response --path <path>   # .DWN.RES ZIP -> immutable lines + artifact inventory
 ```
@@ -94,6 +98,10 @@ are created on startup.
 - `search_response_file`, `search_response` — the response header and request-linked
   `.SRC.RESm` detail fields defined by `vendor/individual-format-search.xlsx` (ready for
   response ingestion).
+- `update_request`, `update_batch` — bulk-update intake rows (existing CKYC number + raw JSON)
+  and per-client-type `.UPD` batch audit with claim/FVU status and record-20 line numbers.
+- `update_response_file`, `update_response` — the `.UPD.RESm` record-80 header and record-90
+  details (`02 No Match` / `03 Rejected`) defined by both update-format workbooks.
 
 The SQL Server equivalent is in `scripts/sqlserver/schema.sql` (set `database.provider`
 = `sqlserver` and supply a matching connection string).
@@ -142,6 +150,49 @@ Place a plain `.SRC.RESm` file or its response ZIP in `runtime/search/response`,
 `search_response`, and updates the matching `search_request` rows using the original SRC
 filename and input record line number. Re-running the same archive is safe: its SHA-256 is
 used to prevent duplicate imports.
+
+### Bulk update process (individual + legal entity)
+
+The `update-*` commands implement the CERSAI **bulk update (.UPD)** flow defined by
+`vendor/individual-format-update.xlsx` (client type "I") and `vendor/legal-format-update.xlsx`
+(client type "L"). A .UPD submission amends an *existing* CKYC record: every detail line opens
+with Record Type, Line Number and the existing 14-digit CKYC Number, followed by per-section
+"*Update Flg" switches (`Y` marks a section for amendment) and the values being changed. Both
+workbooks share records 20/30/40/50/60/70; the legal-entity POI record carries one block per
+constitution family, and legal headers carry one extra filler.
+
+```powershell
+dotnet run --project src/CKYC.Processor -- update-load samples/update-individual.json
+dotnet run --project src/CKYC.Processor -- update-load samples/update-legal.json
+dotnet run --project src/CKYC.Processor -- update-process --limit 1000   # one .UPD per client type
+dotnet run --project src/CKYC.Processor -- update-fvu                    # validates via the FVU runner
+dotnet run --project src/CKYC.Processor -- update-response               # imports .UPD.RESm replies
+```
+
+* **update-load** parses object/array JSON (or wrapper arrays `records`/`updates`/`requests`/
+  `data`) into pending `update_request` rows. Property names are matched against the format
+  catalog after stripping punctuation (`firstName`, `name.firstName` and `first_name` resolve to
+  the same field), calendar values are normalised to DD-MM-YYYY (DDMMYYYY in legal dates),
+  lengths are checked against the sheet sizes, and at least one section flag must be "Y".
+  Unknown names fail fast with row references.
+* **update-process** claims rows separately per client type with independent daily sequence
+  counters, emits `<ClientType>_<UserID>_<FICODE>_<DDMMYYYY>_<nnnnn>.UPD` under
+  `runtime/update/output/<batchKey>/upload/`, materialises referenced support documents from the
+  document store into `support_docs/` (excluding submissions whose referenced files were never
+  imported — they are marked failed with the reason), archives `upload/<file>` plus docs into
+  `<batchKey>.zip`, and stamps each submission's record-20 line number. A section's detail line
+  is written only when it carries amendment payload.
+* **update-fvu** validates through the shared FVU runner and stores the validated ZIP + hash on
+  `update_batch`.
+* **update-response** reads `.UPD.RESm` (record-80 header / record-90 detail) or a response ZIP:
+  header totals land in `update_response_file`, details in `update_response`, and matched
+  submissions (via .UPD file name + "Line Number of Record type 20") receive ack number,
+  status (`02 No Match` returns the CKYC number, `03 Rejected` carries the rejection remark) and
+  read timestamps. SHA-256 deduplication makes re-imports safe.
+
+The field layouts live in one place — `CKYC.Core.Spec.UpdateFormat` — transcribed row-for-row
+from both workbooks; `CkycIndividualUpdateWriter` and `CkycLegalEntityUpdateWriter` render them,
+and every detail line ends with the FVU-managed Hash Value placeholder column.
 
 ---
 

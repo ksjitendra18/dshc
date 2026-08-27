@@ -1,0 +1,99 @@
+{
+  "customerId": "ENT-LEGAL-DEMO-001",
+  "searchKey": "LMODEMO0001ENTLEGL01",
+  "entityName": "Meridian Demo Solutions Pvt Ltd",
+  "entityConstitution": "D",
+
+  "listedCompany": "N",
+  "dateOfIncorporation": "15-03-2015",
+  "placeOfIncorporation": "Mumbai",
+  "countryOfIncorporation": "IN",
+  "tinIssuingCountry": "IN",
+
+  "pan": "AAACX1234A",
+  "panVerified": "Y",
+  "panDocument": "Pan.pdf",
+  "tinGstNumber": "22AAACX1234A1Z5",
+  "tinGstnDocument": "TinGst.pdf",
+
+  "proofs": [
+    {
+      "certificateOfIncorporation": "CertificateOfIncorporation.pdf",
+      "cin": "U50500MH2015PLC123456",
+      "memorandumAndArticles": "MemorandumAndArticles.pdf",
+      "resolutionBoardPoA": "ResolutionPoA.pdf",
+      "namesSeniorManagement": "NamesSeniorManagement.pdf"
+    }
+  ],
+
+  "registeredAddress": {
+    "line1": "Unit 401, Tech Park One",
+    "line2": "Andheri East",
+    "line3": "",
+    "city": "Mumbai",
+    "state": "MH",
+    "district": "225",
+    "pinCode": "400069",
+    "country": "IN",
+    "proofOfAddress": "A"
+  },
+  "principalAddress": {
+    "sameAsRegistered": "N",
+    "line1": "Survey 210, Business Bay",
+    "line2": "Baner Road",
+    "line3": "",
+    "city": "Pune",
+    "state": "MH",
+    "district": "225",
+    "pinCode": "411014",
+    "country": "IN",
+    "proofOfAddress": "B"
+  },
+  "registeredAddressDocument": "RegAddress.pdf",
+  "principalAddressDocument": "PrinAddress.pdf",
+
+  "contact": {
+    "countryCode1": "+91",
+    "mobileNumber1": "9876543210",
+    "countryCode2": "+91",
+    "mobileNumber2": "9988776655",
+    "email1": "compliance@meridiandemo.com",
+    "email2": "legal@meridiandemo.com"
+  },
+
+  "relatedParties": [
+    {
+      "relation": "Director",
+      "ckycNumber": "50759422592045",
+      "controllingInterest": "Ownership",
+      "percentageOwnership": "25.00",
+      "din": "09189332"
+    },
+    {
+      "relation": "Beneficial Owner",
+      "ckycNumber": "22319635866006",
+      "controllingInterest": "Ownership",
+      "percentageOwnership": "35.00"
+    }
+  ],
+
+  "other": {
+    "remarks": "Legal entity create sample",
+    "certifiedCopies": "Y",
+    "equivalentEDoc": "N",
+    "verificationFromDigiLocker": "N",
+    "attestationDate": "27-08-2026",
+    "employeeName": "Jitendra Sharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "21171176839909",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN0238",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "consentDocument": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "27-08-2026"
+  }
+}

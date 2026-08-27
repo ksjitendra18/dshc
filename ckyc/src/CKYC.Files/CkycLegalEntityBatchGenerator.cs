@@ -34,7 +34,7 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         if (records.Count > CkycRecords.MaxLegalEntityBatchRecords)
             throw new InvalidOperationException($"A legal-entity batch cannot contain more than {CkycRecords.MaxLegalEntityBatchRecords} customers.");
 
-        var (valid, skipped) = Partition(records);
+        var (valid, skipped) = Partition(records, _batch.FiCode);
         if (valid.Count == 0)
             throw new InvalidOperationException(
                 $"All {records.Count} legal-entity record(s) failed validation — no batch was produced. " +
@@ -74,14 +74,19 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
         return new GeneratedBatch(batchKey, fileName, uploadPath, zipPath, valid.Count, DateTime.UtcNow, skipped, record20Lines);
     }
 
-    private static (List<LegalEntity> Valid, List<SkippedRecord> Skipped) Partition(IReadOnlyList<LegalEntity> records)
+    private static (List<LegalEntity> Valid, List<SkippedRecord> Skipped) Partition(IReadOnlyList<LegalEntity> records, string fiCode)
     {
         var valid = new List<LegalEntity>();
         var skipped = new List<SkippedRecord>();
 
         foreach (var r in records)
         {
-            var errors = LegalEntityRecordValidator.Validate(r);
+            var errors = LegalEntityRecordValidator.Validate(r).ToList();
+            // The FVU requires the record-70 Institution Code to match the FI code used
+            // in the batch file name (ERR_395).
+            if (!string.Equals(r.Other?.InstitutionCode?.Trim(), fiCode.Trim(), StringComparison.OrdinalIgnoreCase))
+                errors.Add(new ValidationError(null, "70", null, "Institution Code", r.Other?.InstitutionCode, null,
+                    $"The Institution Code specified in the uploaded file must match the Institution Code used in the file name ({fiCode})."));
             if (errors.Count == 0)
             {
                 valid.Add(r);

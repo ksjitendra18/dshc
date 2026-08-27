@@ -591,6 +591,92 @@ public static class Ddl
             CreatedAt              TEXT
         )
         """,
+
+        // ---- CKYCR bulk update: JSON intake, per-client-type claiming and .UPD.RESm responses.
+        //      Request rows mirror search_request; batches are generated separately per client
+        //      type ("I" individual / "L" legal entity) with their own daily sequence numbers. ----
+        """
+        CREATE TABLE IF NOT EXISTS update_request (
+            Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            ExternalRequestId       VARCHAR(50),
+            CustomerId              VARCHAR(50),
+            ClientType              VARCHAR(1),
+            CkycNumber              VARCHAR(14),
+            ProcessingStatus        INTEGER,
+            ClaimToken              VARCHAR(36),
+            ClaimedAt               TEXT,
+            ProcessedAt             TEXT,
+            OutputFileName          VARCHAR(260),
+            OutputLineNumber        INTEGER,
+            OutputBatchKey          VARCHAR(60),
+            ResponseStatus          VARCHAR(20),
+            LastAckNumber           VARCHAR(20),
+            LastResponseStatusCode  VARCHAR(2),
+            LastResponseRemark      VARCHAR(500),
+            ResponseReadAt          TEXT,
+            LastError               VARCHAR(2000),
+            RawRequestJson          TEXT,
+            CreatedAt               TEXT,
+            UpdatedAt               TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS update_batch (
+            Id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            BusinessDate   TEXT,
+            FileSequence   INTEGER,
+            ClientType     VARCHAR(1),
+            ClaimToken     VARCHAR(36),
+            RecordCount    INTEGER,
+            Status         INTEGER,
+            FileName       VARCHAR(260),
+            FilePath       VARCHAR(1000),
+            FvuZipPath     VARCHAR(1000),
+            FvuHash        VARCHAR(128),
+            Error          VARCHAR(2000),
+            CreatedAt      TEXT,
+            CompletedAt    TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS update_response_file (
+            Id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            UpdateBatchId          INTEGER,
+            ResponseFileName       VARCHAR(260),
+            ResponseFileNumber     INTEGER,
+            ClientType             VARCHAR(1),
+            FiCode                 VARCHAR(6),
+            RegionCode             VARCHAR(11),
+            TotalRecords           INTEGER,
+            TotalProcessed         INTEGER,
+            RecordsUnderProcessing INTEGER,
+            RecordsFailed          INTEGER,
+            ResponseTimestamp      VARCHAR(30),
+            Filler1                VARCHAR(50),
+            Filler2                VARCHAR(50),
+            RawHeaderData          TEXT,
+            SourceArchiveName      VARCHAR(260),
+            SourceHash             VARCHAR(128),
+            CreatedAt              TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS update_response (
+            Id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            UpdateRequestId        INTEGER,
+            ResponseFileName       VARCHAR(260),
+            ResponseFileNumber     INTEGER,
+            LineNumber             INTEGER,
+            InputRecord20LineNumber INTEGER,
+            AckNumber              VARCHAR(20),
+            RecordStatus           VARCHAR(2),
+            CkycNumber             VARCHAR(15),
+            RejectionRemark        VARCHAR(150),
+            RawResponseData        TEXT,
+            CreatedAt              TEXT
+        )
+        """,
+
         // ---- LEGAL ENTITY record tables (client type L). Deliberately separate from the
         //      individual kyc_record_* tables — a legal entity never shares a row with a
         //      retail customer. Same schema philosophy (length only, no NOT NULL/CHECK/FK). ----
@@ -836,6 +922,11 @@ public static class Ddl
         "CREATE INDEX IF NOT EXISTS ix_master_record_batch_customer ON master_record_batch(CustomerId, BatchedAt)",
         "CREATE INDEX IF NOT EXISTS ix_master_record_batch_fileline ON master_record_batch(BatchFile, Record20LineNumber)",
         "CREATE INDEX IF NOT EXISTS ix_search_response_file_hash ON search_response_file(SourceHash)",
+        "CREATE INDEX IF NOT EXISTS ix_update_request_status ON update_request(ProcessingStatus, Id)",
+        "CREATE INDEX IF NOT EXISTS ix_update_request_claim ON update_request(ClaimToken)",
+        "CREATE INDEX IF NOT EXISTS ix_update_request_output ON update_request(OutputFileName, OutputLineNumber)",
+        "CREATE INDEX IF NOT EXISTS ix_update_batch_date ON update_batch(BusinessDate, ClientType, FileSequence)",
+        "CREATE INDEX IF NOT EXISTS ix_update_response_file_hash ON update_response_file(SourceHash)",
         "CREATE INDEX IF NOT EXISTS ix_kyc_record20_customer ON kyc_record_20(CustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_kyc_record30_customer ON kyc_record_30(CustomerId)",
         "CREATE INDEX IF NOT EXISTS ix_kyc_record40_customer ON kyc_record_40(CustomerId)",

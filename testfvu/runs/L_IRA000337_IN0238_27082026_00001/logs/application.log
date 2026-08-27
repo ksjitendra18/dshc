@@ -1,0 +1,25 @@
+2026-08-27 00:21:56 | INFO    | ======================================================================
+2026-08-27 00:21:56 | INFO    | FVU Run Utility — batch run starting
+2026-08-27 00:21:56 | INFO    | sys.frozen       : True
+2026-08-27 00:21:56 | INFO    | sys.executable   : D:\centralprocessing\vendor\FVU_RUN_UTILITY.exe
+2026-08-27 00:21:56 | INFO    | Application root : D:\centralprocessing\vendor
+2026-08-27 00:21:56 | INFO    | Bundle root      : D:\centralprocessing\testfvu\tmp\_MEI120842
+2026-08-27 00:21:56 | INFO    | Config file      : D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\config.yaml  (exists=True)
+2026-08-27 00:21:56 | INFO    | Input folder     : D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\input  (exists=True)
+2026-08-27 00:21:56 | INFO    | Output folder    : D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\output
+2026-08-27 00:21:56 | INFO    | Log folder       : D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\logs
+2026-08-27 00:21:56 | INFO    | API              : http://localhost:9091/api/search-validate/file-with-support  (triggerSource=BATCH)
+2026-08-27 00:21:56 | INFO    | JAR path         : D:\centralprocessing\testfvu\tmp\_MEI120842\lib\FVU-Utility.jar  (exists=True)
+2026-08-27 00:21:56 | INFO    | JDK path         : D:\centralprocessing\testfvu\tmp\_MEI120842\jdk21  (exists=True)
+2026-08-27 00:21:56 | INFO    | ======================================================================
+2026-08-27 00:21:56 | INFO    | ======================================================================
+2026-08-27 00:21:56 | INFO    | Starting backend JAR: D:\centralprocessing\testfvu\tmp\_MEI120842\lib\FVU-Utility.jar
+2026-08-27 00:21:56 | INFO    | Using JDK: D:\centralprocessing\testfvu\tmp\_MEI120842\jdk21
+2026-08-27 00:22:04 | INFO    | Backend is ready at http://localhost:9091
+2026-08-27 00:22:04 | INFO    | Scanned D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\input — found 1 supported file(s).
+2026-08-27 00:22:04 | INFO    | [1/1] Processing L_IRA000337_IN0238_27082026_00001.UPL
+2026-08-27 00:22:05 | INFO    | [1/1] L_IRA000337_IN0238_27082026_00001.UPL -> SUCCESS (0.60s)
+2026-08-27 00:22:05 | INFO    | Batch complete: 1 total, 1 success, 0 failed (100.0%).
+2026-08-27 00:22:05 | INFO    | Stopping backend JAR...
+2026-08-27 00:22:05 | INFO    | Backend stopped.
+2026-08-27 00:22:05 | INFO    | Executive Summary PDF written to D:\centralprocessing\testfvu\runs\L_IRA000337_IN0238_27082026_00001\output\Executive_Summary_20260827_002205.pdf

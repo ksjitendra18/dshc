@@ -36,6 +36,10 @@ public sealed class CommandRegistry
             new SearchProcessCommand(),
             new SearchFvuCommand(),
             new SearchResponseCommand(),
+            new UpdateLoadCommand(),
+            new UpdateProcessCommand(),
+            new UpdateFvuCommand(),
+            new UpdateResponseCommand(),
             new DownloadResponseCommand(),
         });
 
@@ -67,6 +71,10 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe search-process --limit 1000");
         sb.AppendLine("  CKYCProcessor.exe search-fvu");
         sb.AppendLine("  CKYCProcessor.exe search-response");
+        sb.AppendLine("  CKYCProcessor.exe update-load updates.json");
+        sb.AppendLine("  CKYCProcessor.exe update-process --limit 1000");
+        sb.AppendLine("  CKYCProcessor.exe update-fvu");
+        sb.AppendLine("  CKYCProcessor.exe update-response");
         sb.AppendLine("  CKYCProcessor.exe download-response --path <DWN.RES.zip>");
         return sb.ToString();
     }

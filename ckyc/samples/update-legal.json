@@ -1,0 +1,36 @@
+[
+  {
+    "externalRequestId": "UPD-L-0001",
+    "customerId": "CUST-LEGAL-ACME",
+    "clientType": "L",
+    "ckycNumber": "22111222333444",
+
+    "entityDetailsFlg": "Y",
+    "name": "Acme Widgets Private Limited",
+    "entityConstitution": "D",
+    "dateOfIncorporation": "01-04-2015",
+    "countryOfIncorporation": "IN",
+    "pan": "AAECA1234F",
+    "panVerified": "Y",
+
+    "poiDetailsFlg": "Y",
+    "cin": "L40100MH2015PLC266641",
+
+    "registeredAddressFlg": "Y",
+    "regLine1": "Plot 21 MIDC Andheri East",
+    "regCity": "Mumbai",
+    "regState": "27",
+    "regDistrict": "519",
+    "regPinCode": "400093",
+    "regCountry": "IN",
+    "regProofOfAddress": "A",
+
+    "principalPlaceFlg": "Y",
+    "principalSameAsRegistered": "Y",
+
+    "contactDetailsFlg": "Y",
+    "countryCode1": "+91",
+    "mobileNumber1": "9812345678",
+    "email1": "compliance@acme.example"
+  }
+]

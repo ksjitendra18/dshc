@@ -25,6 +25,7 @@ public sealed class AppContext
         LegalEntities = new LegalEntityRepository(Database);
         Journal = new BatchJournal(Database);
         Search = new SearchRepository(Database);
+        Updates = new UpdateRepository(Database);
         Downloads = new DownloadRepository(Database);
         Documents = new SqliteDocumentStore(Database);
 
@@ -37,6 +38,8 @@ public sealed class AppContext
         BatchGenerator = new CkycBatchGenerator(settings.Batch, Hasher, Documents);
         LegalEntityBatchGenerator = new CkycLegalEntityBatchGenerator(settings.Batch, Hasher, Documents);
         SearchFileWriter = new CkycSearchWriter(settings.Search);
+        IndividualUpdateWriter = new CkycIndividualUpdateWriter(settings.Update);
+        LegalEntityUpdateWriter = new CkycLegalEntityUpdateWriter(settings.Update);
         Fvu = new FvuRunner(settings.Fvu, Hasher);
     }
 
@@ -48,6 +51,7 @@ public sealed class AppContext
     public ILegalEntityRepository LegalEntities { get; }
     public IBatchJournal Journal { get; }
     public ISearchRepository Search { get; }
+    public IUpdateRepository Updates { get; }
     public IDownloadRepository Downloads { get; }
     public IDocumentStore Documents { get; }
 
@@ -60,6 +64,8 @@ public sealed class AppContext
     public IBatchGenerator BatchGenerator { get; }
     public ILegalEntityBatchGenerator LegalEntityBatchGenerator { get; }
     public ISearchFileWriter SearchFileWriter { get; }
+    public CkycIndividualUpdateWriter IndividualUpdateWriter { get; }
+    public CkycLegalEntityUpdateWriter LegalEntityUpdateWriter { get; }
     public IFvuRunner Fvu { get; }
 
     public async Task InitializeAsync(CancellationToken ct = default)

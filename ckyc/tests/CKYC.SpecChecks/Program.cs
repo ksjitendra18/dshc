@@ -164,24 +164,107 @@ foreach (var constitution in legalConstitutions)
 var company = legalProvider.GetLegalEntity("LEGAL-COMPANY", LeConstitution.PrivateLimitedCompany);
 var legalLines = new CkycLegalEntityUploadWriter(new BatchSettings()).Write([company], new DateOnly(2026, 8, 25))
     .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+// Widths per vendor/legal-format-create.xlsx validated against the real FVU utility:
+// every detail line ends with an empty Hash Value placeholder (trailing pipe), and
+// record 30 is constitution-specific (FVU ERR_169 pipe-count rule), so a company's
+// record 30 carries exactly its own POI block + hash.
 var legalWidths = new Dictionary<string, int>
 {
-    ["10"] = 11, ["20"] = 24, ["30"] = 36, ["40"] = 30, ["50"] = 11, ["60"] = 11, ["70"] = 20,
+    ["10"] = 11, ["20"] = 25, ["30"] = 11, ["40"] = 31, ["50"] = 12, ["60"] = 12, ["70"] = 21,
 };
 foreach (var line in legalLines)
 {
     var fields = line.Split('|');
     if (!legalWidths.TryGetValue(fields[0], out var width) || fields.Length != width)
         throw new InvalidOperationException($"Legal record {fields[0]} emitted {fields.Length} fields; expected {width}.");
+    if (!fields[0].Equals(CkycRecords.Header, StringComparison.Ordinal) && fields[^1] != "")
+        throw new InvalidOperationException($"Legal record {fields[0]} did not end with the empty Hash Value placeholder.");
 }
 var relatedLines = legalLines.Where(line => line.StartsWith("60|", StringComparison.Ordinal)).Select(line => line.Split('|')).ToList();
 if (relatedLines.Count != 2 || relatedLines.Any(fields => fields[3] != "2" || fields[4] != "1"))
     throw new InvalidOperationException("Legal record 60 did not emit related-person and beneficial-owner counts.");
+// Controlling interest / percentage ownership are Beneficial Owner-only (ERR_111/ERR_258).
+var directorLine = relatedLines.Single(fields => fields[5] == "Director");
+if (directorLine[7] != "" || directorLine[8] != "")
+    throw new InvalidOperationException("Controlling interest was emitted on a non-Beneficial-Owner related-party row.");
+var ownerLine = relatedLines.Single(fields => fields[5] == "Beneficial Owner");
+if (ownerLine[7] == "")
+    throw new InvalidOperationException("The Beneficial Owner row did not carry its controlling interest.");
+// Record 20 conditional flags must be blank when not applicable (ERR_252/ERR_257);
+// a public limited company must still carry them.
+var plCompany = legalProvider.GetLegalEntity("LEGAL-PL", LeConstitution.PublicLimitedCompany);
+plCompany.ListedCompany = "Y"; plCompany.DateOfCommencement = "01-01-2016";
+var plLines = new CkycLegalEntityUploadWriter(new BatchSettings())
+    .Write([plCompany], new DateOnly(2026, 8, 25))
+    .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+    .Single(line => line.StartsWith("20|", StringComparison.Ordinal)).Split('|');
+if (plLines[5] != "Y")
+    throw new InvalidOperationException("A public limited company lost its Listed Company flag.");
+
+// Each other constitution emits its own narrowed record-30 block: trust and
+// unincorporated association blocks have one field fewer than companies.
+foreach (var (constitution, record30Width) in new[]
+         {
+             (LeConstitution.Trust, 10), (LeConstitution.UnincorporatedAssociation, 10),
+             (LeConstitution.SoleProprietorship, 11), (LeConstitution.PartnershipFirm, 11),
+         })
+{
+    var entity = legalProvider.GetLegalEntity($"LEGAL-R30-{constitution}", constitution);
+    var constitutionLines = new CkycLegalEntityUploadWriter(new BatchSettings())
+        .Write([entity], new DateOnly(2026, 8, 25))
+        .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+    var record30 = constitutionLines.Single(line => line.StartsWith("30|", StringComparison.Ordinal)).Split('|');
+    if (record30.Length != record30Width || record30[^1] != "")
+        throw new InvalidOperationException(
+            $"Record 30 for constitution {constitution} emitted {record30.Length} fields; expected {record30Width} (+ empty Hash Value).");
+}
 
 var unsafeDocument = legalProvider.GetLegalEntity("LEGAL-UNSAFE", LeConstitution.PrivateLimitedCompany);
 unsafeDocument.PanDocument = "../Pan.pdf";
 if (!LegalEntityRecordValidator.Validate(unsafeDocument).Any(e => e.FieldName == "PAN document"))
     throw new InvalidOperationException("Legal validation accepted a document path traversal.");
+
+// Record 20 CM rules from vendor/legal-format-create.xlsx.
+var noPanNoForm97 = legalProvider.GetLegalEntity("LEGAL-NOPAN", LeConstitution.PartnershipFirm);
+noPanNoForm97.Pan = null; noPanNoForm97.Form97 = null; noPanNoForm97.PanDocument = null;
+var noPanErrors = LegalEntityRecordValidator.Validate(noPanNoForm97);
+if (!noPanErrors.Any(e => e.FieldName == "Form 97"))
+    throw new InvalidOperationException("Legal validation accepted a missing PAN without Form 97.");
+if (!noPanErrors.Any(e => e.FieldName == "PAN/Form 97 document"))
+    throw new InvalidOperationException("Legal validation accepted a missing PAN without the PAN/Form 97 document name.");
+if (!noPanErrors.Any(e => e.FieldName == "PAN" && e.ErrorDescription!.Contains("mandatory", StringComparison.Ordinal)))
+    throw new InvalidOperationException("Missing PAN did not report the partnership-firm mandatory-PAN rule.");
+
+var badGst = legalProvider.GetLegalEntity("LEGAL-BADGST", LeConstitution.PrivateLimitedCompany);
+badGst.TinGstNumber = "22ABCDE1234F1Z"; // 14 chars — must be 15 per GST format
+if (!LegalEntityRecordValidator.Validate(badGst).Any(e => e.FieldName == "TIN/GST registration number"))
+    throw new InvalidOperationException("Legal validation accepted a malformed TIN/GST number.");
+
+var badCin = legalProvider.GetLegalEntity("LEGAL-BADCIN", LeConstitution.PrivateLimitedCompany);
+badCin.Proofs[0].Cin = "L12345MH20PLC987654"; // missing one digit vs the 21-char CIN structure
+if (!LegalEntityRecordValidator.Validate(badCin).Any(e => e.FieldName == "CIN"))
+    throw new InvalidOperationException("Legal validation accepted a malformed CIN.");
+
+// ERR_180: the fourth PAN character must match the constitution (T for trusts).
+var trustBadPan = legalProvider.GetLegalEntity("LEGAL-PANCHR", LeConstitution.Trust);
+trustBadPan.Pan = trustBadPan.Pan![0..3] + "C" + trustBadPan.Pan[4..]; // company character on a trust
+if (!LegalEntityRecordValidator.Validate(trustBadPan).Any(e => e.FieldName == "PAN" && e.ErrorDescription!.Contains("fourth PAN character", StringComparison.Ordinal)))
+    throw new InvalidOperationException("A trust PAN carrying a non-trust fourth character was accepted.");
+
+// Record 40: same-as-registered Y means the principal block and its document are optional,
+// while N requires both (the CRM default entity already exercises N).
+var sameAddressCompany = legalProvider.GetLegalEntity("LEGAL-SAMEADDR", LeConstitution.PrivateLimitedCompany);
+sameAddressCompany.PrincipalAddress = new LeAddressDetails { SameAsRegistered = "Y" };
+sameAddressCompany.PrincipalAddressDocument = null;
+if (LegalEntityRecordValidator.Validate(sameAddressCompany).Count != 0)
+    throw new InvalidOperationException("Same-as-registered=Y rejected a valid registered-address-only record.");
+
+// Record 50: an Indian mobile must be exactly 10 digits; emails must contain @.
+var badContact = legalProvider.GetLegalEntity("LEGAL-BADCONTACT", LeConstitution.PrivateLimitedCompany);
+badContact.Contact!.MobileNumber1 = "98765"; badContact.Contact.Email1 = "not-an-email";
+var badContactErrors = LegalEntityRecordValidator.Validate(badContact);
+if (!badContactErrors.Any(e => e.FieldName == "Mobile number (01)") || !badContactErrors.Any(e => e.FieldName == "Email ID (01)"))
+    throw new InvalidOperationException("Legal validation accepted malformed mobile/email details.");
 
 var tooManyLegal = Enumerable.Range(1, CkycRecords.MaxLegalEntityBatchRecords + 1)
     .Select(i => legalProvider.GetLegalEntity($"LEGAL-LIMIT-{i}", LeConstitution.PrivateLimitedCompany)).ToList();

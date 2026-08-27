@@ -41,7 +41,7 @@ public sealed class CkycLegalEntityUploadWriter
 
             // Record 30 : one POI line for the entity (the applicable constitution block).
             if (record.Proofs.Count > 0)
-                sb.AppendLine(BuildRecord30(record.CustomerId, record.Proofs[0], r20Line, lineNo++));
+                sb.AppendLine(BuildRecord30(record.CustomerId, record, r20Line, lineNo++));
 
             if (record.RegisteredAddress is not null)
                 sb.AppendLine(BuildRecord40(record, r20Line, lineNo++));
@@ -94,17 +94,24 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
+    // Every detail record ends with an empty "Hash Value" placeholder column that the
+    // CERSAI FVU overwrites with the record-level hash ("Hash Value" is the last row of
+    // every record sheet in File_Format_Upload_LegalEntity, and the official L_*.UPL
+    // sample carries a trailing pipe on every detail line — see vendor/sample_files).
+
     private string BuildRecord20(LegalEntity r, int lineNo)
     {
-        var f = new string?[24];
+        var f = new string?[25];   // 24 spec fields + Hash Value placeholder
         f[0] = CkycRecords.Demographic;               // 20
         f[1] = lineNo.ToString();
         f[2] = NormalizeSearchKey(r.SearchKey);
         f[3] = r.EntityName;
         f[4] = r.EntityConstitution;
-        f[5] = Coalesce(r.ListedCompany, "N");
-        f[6] = Coalesce(r.RegisteredFirm, "N");
-        f[7] = Coalesce(r.RegisteredTrust, "N");
+        // The FVU rejects these flags when they do not apply to the constitution
+        // (ERR_252/ERR_257), so they are emitted only for their own branch.
+        f[5] = Is(r.EntityConstitution, LeConstitution.PublicLimitedCompany) ? Coalesce(r.ListedCompany, "N") : "";
+        f[6] = Is(r.EntityConstitution, LeConstitution.PartnershipFirm) ? Coalesce(r.RegisteredFirm, "N") : "";
+        f[7] = Is(r.EntityConstitution, LeConstitution.Trust) ? Coalesce(r.RegisteredTrust, "N") : "";
         f[8] = r.DateOfIncorporation;
         f[9] = Coalesce(r.DateOfCommencement, "");
         f[10] = Coalesce(r.PlaceOfIncorporation, "");
@@ -126,55 +133,79 @@ public sealed class CkycLegalEntityUploadWriter
         return string.Join('|', f);
     }
 
-    private string BuildRecord30(string customerId, LeProofOfIdentity p, int r20Line, int lineNo)
+    /// <summary>
+    /// Record 30 is constitution-specific: only the block that applies to the entity's
+    /// constitution is written (immediately after the reference record-20 column),
+    /// followed by the Hash Value placeholder. The FVU enforces the exact pipe count
+    /// per POI section (ERR_169: e.g. Company POI = 10 pipes, Trust POI = 9 pipes).
+    /// </summary>
+    private string BuildRecord30(string customerId, LegalEntity record, int r20Line, int lineNo)
     {
-        var f = new string?[36];
+        var p = record.Proofs[0];
+        var f = new string?[11];      // RT + line + ref + applicable block + Hash Value placeholder
         f[0] = CkycRecords.Proof;                     // 30
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
 
-        // ---- Company / Section 8 ----
-        f[3] = Doc(customerId, Coalesce(p.CertificateOfIncorporation, ""));
-        f[4] = Coalesce(p.Cin, "");
-        f[5] = Doc(customerId, Coalesce(p.MemorandumAndArticles, ""));
-        f[6] = Doc(customerId, Coalesce(p.ResolutionBoardPoA, ""));
-        f[7] = Doc(customerId, Coalesce(p.NamesSeniorManagement, ""));
-        f[8] = Doc(customerId, Coalesce(p.CertificateOfCommencement, ""));
-        f[9] = Doc(customerId, Coalesce(p.OthersCompany, ""));
-
-        // ---- Partnership Firm / LLP ----
-        f[10] = Doc(customerId, Coalesce(p.RegistrationCertificate, ""));
-        f[11] = Coalesce(p.RegistrationNumber, "");
-        f[12] = Doc(customerId, Coalesce(p.LlpinCertificate, ""));
-        f[13] = Coalesce(p.Llpin, "");
-        f[14] = Doc(customerId, Coalesce(p.PartnershipDeed, ""));
-        f[15] = Doc(customerId, Coalesce(p.NamesAllPartners, ""));
-        f[16] = Doc(customerId, Coalesce(p.OthersPartnership, ""));
-
-        // ---- Trust ----
-        f[17] = Doc(customerId, Coalesce(p.TrustRegistrationCertificate, ""));
-        f[18] = Coalesce(p.TrustRegistrationNumber, "");
-        f[19] = Doc(customerId, Coalesce(p.TrustDeed, ""));
-        f[20] = Doc(customerId, Coalesce(p.NamesBeneficiariesTrustees, ""));
-        f[21] = Doc(customerId, Coalesce(p.TrustPowerOfAttorney, ""));
-        f[22] = Doc(customerId, Coalesce(p.OthersTrust, ""));
-
-        // ---- Unincorporated Association ----
-        f[23] = Doc(customerId, Coalesce(p.UnincorporatedRegistrationCertificate, ""));
-        f[24] = Coalesce(p.UnincorporatedRegistrationNumber, "");
-        f[25] = Doc(customerId, Coalesce(p.ResolutionManagingBody, ""));
-        f[26] = Doc(customerId, Coalesce(p.UnincorporatedPowerOfAttorney, ""));
-        f[27] = Doc(customerId, Coalesce(p.InfoEstablishExistence, ""));
-        f[28] = Doc(customerId, Coalesce(p.OthersUnincorporated, ""));
-
-        // ---- Other constitution types ----
-        f[29] = Doc(customerId, Coalesce(p.SupportingDocumentsPoi, ""));
-        f[30] = Coalesce(p.OtherTypeRegistrationNumber, "");
-        f[31] = Doc(customerId, Coalesce(p.OtherTypeRegistrationCertificate, ""));
-        f[32] = Doc(customerId, Coalesce(p.OtherTypePowerOfAttorney, ""));
-        f[33] = Doc(customerId, Coalesce(p.ActivityProof1, ""));
-        f[34] = Doc(customerId, Coalesce(p.ActivityProof2, ""));
-        f[35] = Doc(customerId, Coalesce(p.OthersOtherType, ""));
+        if (LeConstitution.IsCompany(record.EntityConstitution))
+        {
+            f[3] = Doc(customerId, Coalesce(p.CertificateOfIncorporation, ""));
+            f[4] = Coalesce(p.Cin, "");
+            f[5] = Doc(customerId, Coalesce(p.MemorandumAndArticles, ""));
+            f[6] = Doc(customerId, Coalesce(p.ResolutionBoardPoA, ""));
+            f[7] = Doc(customerId, Coalesce(p.NamesSeniorManagement, ""));
+            f[8] = Doc(customerId, Coalesce(p.CertificateOfCommencement, ""));
+            f[9] = Doc(customerId, Coalesce(p.OthersCompany, ""));
+        }
+        else if (record.EntityConstitution is LeConstitution.PartnershipFirm or LeConstitution.Llp)
+        {
+            f[3] = Doc(customerId, Coalesce(p.RegistrationCertificate, ""));
+            f[4] = Coalesce(p.RegistrationNumber, "");
+            f[5] = Doc(customerId, Coalesce(p.LlpinCertificate, ""));
+            f[6] = Coalesce(p.Llpin, "");
+            f[7] = Doc(customerId, Coalesce(p.PartnershipDeed, ""));
+            f[8] = Doc(customerId, Coalesce(p.NamesAllPartners, ""));
+            f[9] = Doc(customerId, Coalesce(p.OthersPartnership, ""));
+        }
+        else if (Is(record.EntityConstitution, LeConstitution.Trust))
+        {
+            // Trust block has one field fewer — trimmed to keep the FVU pipe count.
+            var trust = new string?[10];
+            trust[0] = CkycRecords.Proof;
+            trust[1] = lineNo.ToString();
+            trust[2] = r20Line.ToString();
+            trust[3] = Doc(customerId, Coalesce(p.TrustRegistrationCertificate, ""));
+            trust[4] = Coalesce(p.TrustRegistrationNumber, "");
+            trust[5] = Doc(customerId, Coalesce(p.TrustDeed, ""));
+            trust[6] = Doc(customerId, Coalesce(p.NamesBeneficiariesTrustees, ""));
+            trust[7] = Doc(customerId, Coalesce(p.TrustPowerOfAttorney, ""));
+            trust[8] = Doc(customerId, Coalesce(p.OthersTrust, ""));
+            return string.Join('|', trust);
+        }
+        else if (Is(record.EntityConstitution, LeConstitution.UnincorporatedAssociation))
+        {
+            var unincorporated = new string?[10];
+            unincorporated[0] = CkycRecords.Proof;
+            unincorporated[1] = lineNo.ToString();
+            unincorporated[2] = r20Line.ToString();
+            unincorporated[3] = Doc(customerId, Coalesce(p.UnincorporatedRegistrationCertificate, ""));
+            unincorporated[4] = Coalesce(p.UnincorporatedRegistrationNumber, "");
+            unincorporated[5] = Doc(customerId, Coalesce(p.ResolutionManagingBody, ""));
+            unincorporated[6] = Doc(customerId, Coalesce(p.UnincorporatedPowerOfAttorney, ""));
+            unincorporated[7] = Doc(customerId, Coalesce(p.InfoEstablishExistence, ""));
+            unincorporated[8] = Doc(customerId, Coalesce(p.OthersUnincorporated, ""));
+            return string.Join('|', unincorporated);
+        }
+        else
+        {
+            f[3] = Doc(customerId, Coalesce(p.SupportingDocumentsPoi, ""));
+            f[4] = Coalesce(p.OtherTypeRegistrationNumber, "");
+            f[5] = Doc(customerId, Coalesce(p.OtherTypeRegistrationCertificate, ""));
+            f[6] = Doc(customerId, Coalesce(p.OtherTypePowerOfAttorney, ""));
+            f[7] = Doc(customerId, Coalesce(p.ActivityProof1, ""));
+            f[8] = Doc(customerId, Coalesce(p.ActivityProof2, ""));
+            f[9] = Doc(customerId, Coalesce(p.OthersOtherType, ""));
+        }
 
         return string.Join('|', f);
     }
@@ -183,7 +214,7 @@ public sealed class CkycLegalEntityUploadWriter
     {
         var reg = r.RegisteredAddress!;
         var prin = r.PrincipalAddress;
-        var f = new string?[30];
+        var f = new string?[31];      // 30 spec fields + Hash Value placeholder
         f[0] = CkycRecords.Address;                   // 40
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
@@ -217,7 +248,7 @@ public sealed class CkycLegalEntityUploadWriter
 
     private static string BuildRecord50(LeContactDetails c, int r20Line, int lineNo)
     {
-        var f = new string?[11];
+        var f = new string?[12];      // 11 spec fields + Hash Value placeholder
         f[0] = CkycRecords.Contact;                   // 50
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
@@ -234,7 +265,7 @@ public sealed class CkycLegalEntityUploadWriter
 
     private static string BuildRecord60(LegalEntity record, LeRelatedParty rp, int r20Line, int lineNo)
     {
-        var f = new string?[11];
+        var f = new string?[12];      // 11 spec fields + Hash Value placeholder
         f[0] = CkycRecords.RelatedParty;              // 60
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
@@ -242,8 +273,11 @@ public sealed class CkycLegalEntityUploadWriter
         f[4] = record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)).ToString();
         f[5] = rp.Relation;
         f[6] = Coalesce(rp.CkycNumber, "");
-        f[7] = Coalesce(rp.ControllingInterest, "");
-        f[8] = Coalesce(rp.PercentageOwnership, "");
+        // Controlling interest / percentage of ownership apply only to Beneficial Owner
+        // rows (FVU ERR_111/ERR_258) — they are blanked for every other relation.
+        var isBeneficialOwner = string.Equals(rp.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase);
+        f[7] = isBeneficialOwner ? Coalesce(rp.ControllingInterest, "") : "";
+        f[8] = isBeneficialOwner ? Coalesce(rp.PercentageOwnership, "") : "";
         f[9] = Coalesce(rp.OtherRelationName, "");
         f[10] = Coalesce(rp.Din, "");
         return string.Join('|', f);
@@ -252,7 +286,7 @@ public sealed class CkycLegalEntityUploadWriter
     private string BuildRecord70(LegalEntity r, int r20Line, int lineNo, DateOnly businessDate)
     {
         var o = r.Other!;
-        var f = new string?[20];
+        var f = new string?[21];      // 20 spec fields + Hash Value placeholder
         f[0] = CkycRecords.Other;                     // 70
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
@@ -260,7 +294,8 @@ public sealed class CkycLegalEntityUploadWriter
         f[4] = Coalesce(o.CertifiedCopies, "Y");
         f[5] = Coalesce(o.EquivalentEDoc, "N");
         f[6] = Coalesce(o.VerificationFromDigiLocker, "N");
-        f[7] = Coalesce(o.AttestationDate, businessDate.ToString("ddMMyyyy"));
+        // The FVU requires the KYC verification (attestation) date in DD-MM-YYYY (ERR_262).
+        f[7] = Coalesce(o.AttestationDate, businessDate.ToString("dd-MM-yyyy"));
         f[8] = Coalesce(o.EmployeeName, "");
         f[9] = Coalesce(o.EmployeeCode, "");
         f[10] = Coalesce(o.EmployeeDesignation, "");
@@ -286,6 +321,9 @@ public sealed class CkycLegalEntityUploadWriter
 
     private static string Coalesce(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;
+
+    private static bool Is(string? value, string expected) =>
+        string.Equals(value?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
 
     private string? Doc(string customerId, string? value) => string.IsNullOrEmpty(value) ? value : _documentName(customerId, value);
 }

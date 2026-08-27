@@ -14,6 +14,20 @@ public sealed class AppSettings
     public SimulationSettings Simulation { get; set; } = new();
     public RetrySettings Retry { get; set; } = new();
     public SearchSettings Search { get; set; } = new();
+    public UpdateSettings Update { get; set; } = new();
+}
+
+/// <summary>CKYCR bulk-update (.UPD) file settings — individual and legal entity updates.</summary>
+public sealed class UpdateSettings
+{
+    public string UserId { get; set; } = "IAU010441";
+    public string FiCode { get; set; } = "IN0238";
+    public string RegionCode { get; set; } = "01";
+    // The update-format sheets show "eg V2.0"; keep the FVU-validated default configurable.
+    public string VersionNumber { get; set; } = "V1.1";
+    public int SequenceStart { get; set; } = 1;
+    public int ClaimTimeoutMinutes { get; set; } = 30;
+    public string OutputRoot { get; set; } = "runtime/update";
 }
 
 /// <summary>CKYCR individual-search file settings.</summary>
@@ -68,7 +82,7 @@ public sealed class BatchSettings
     public string FiCode { get; set; } = "IN0238";
     public string RegionCode { get; set; } = "01";
     public string ClientType { get; set; } = "I";
-    public string VersionNumber { get; set; } = "V1.0";
+    public string VersionNumber { get; set; } = "V1.1";   // FVU requires V1.1 (ERR_172)
     public int SequenceStart { get; set; } = 1;
     public string OutputRoot { get; set; } = "output";
     public string? AppendedDocSuffix { get; set; }

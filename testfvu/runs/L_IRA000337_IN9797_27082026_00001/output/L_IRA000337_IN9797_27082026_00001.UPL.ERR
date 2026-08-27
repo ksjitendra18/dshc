@@ -1,0 +1,15 @@
+srNo|lineNumber|recordType|fieldName|fieldValue|errorCode|errorDescription
+1|1|10|Version Number|V1.0|ERR_172|Version Number must match the application version V1.1
+2|1|20|Registered Firm|N|ERR_252|Registered firm flag not applicable for selected constitution type
+3|2|30|Pipe Count|36|ERR_169|Header 30 (Company POI) must contain exactly 10 Pipes
+4|5|60|Controlling Interest|Ownership|ERR_111|Controlling Interest is not applicable when Relation is not 'Beneficial Owner'.
+5|5|60|Percentage of Ownership|25.00|ERR_258|Percentage of Ownership is not applicable when Relation is not 'Beneficial Owner'.
+6|7|70|KYC Verification Date|27082026|ERR_262|KYC Verification Date must be in DD-MM-YYYY format
+7|8|20|Registered Firm|N|ERR_252|Registered firm flag not applicable for selected constitution type
+8|8|20|Listed Company|N|ERR_257|Listed Company flag not applicable for selected constitution type.
+9|8|20|PAN|AAACX0744A|ERR_180|PAN 4th character must be 'T' for constitution type H. Found: C
+10|9|30|Pipe Count|36|ERR_169|Header 30 (Trust POI) must contain exactly 9 Pipes
+11|12|60|Controlling Interest|Ownership|ERR_111|Controlling Interest is not applicable when Relation is not 'Beneficial Owner'.
+12|12|60|Percentage of Ownership|43.00|ERR_258|Percentage of Ownership is not applicable when Relation is not 'Beneficial Owner'.
+13|14|70|KYC Verification Date|27082026|ERR_262|KYC Verification Date must be in DD-MM-YYYY format
+14|14|70|Institution Code|IN0238|ERR_395|The Institution Code specified in the uploaded file must match the Institution Code used in the file name.

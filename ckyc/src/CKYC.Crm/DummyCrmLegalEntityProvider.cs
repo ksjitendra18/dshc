@@ -15,7 +15,15 @@ public sealed class DummyCrmLegalEntityProvider
     {
         var idx = StableIndex(customerId);
         var constit = constitution ?? (idx % 2 == 0 ? LeConstitution.PrivateLimitedCompany : LeConstitution.Trust);
-        var pan = $"AAACX{StableDigits(customerId + "P", 4)}A";
+        // Fourth PAN character must match the constitution (FVU ERR_180): C for companies,
+        // T for trusts, F for partnership/LLP, P for sole proprietorship, A otherwise.
+        var panChar = constit is LeConstitution.PrivateLimitedCompany or LeConstitution.PublicLimitedCompany or LeConstitution.Section8Company ? 'C'
+            : constit is LeConstitution.Trust ? 'T'
+            : constit is LeConstitution.PartnershipFirm or LeConstitution.Llp ? 'F'
+            : constit is LeConstitution.SoleProprietorship ? 'P'
+            : constit is LeConstitution.Huf ? 'H'
+            : 'A';
+        var pan = $"AAA{panChar}X{StableDigits(customerId + "P", 4)}A";
         var searchKey = $"LMO{StableDigits(customerId + "S", 17)}"; // must be exactly 20 chars (ERR_061)
 
         var proof = new LeProofOfIdentity();
@@ -131,7 +139,7 @@ public sealed class DummyCrmLegalEntityProvider
             {
                 Remarks = "Fetched from CRM",
                 CertifiedCopies = "Y", EquivalentEDoc = "N", VerificationFromDigiLocker = "N",
-                AttestationDate = DateTime.Today.ToString("ddMMyyyy"),
+                AttestationDate = DateTime.Today.ToString("dd-MM-yyyy"),
                 EmployeeName = "Anusaya", EmployeeCode = "A236", EmployeeDesignation = "SM",
                 EmployeeBranch = "Kamlamills", EmployeeCkycId = StableDigits(customerId + "C", 14),
                 InstitutionName = "PhonePe_Limited", InstitutionCode = "IN0238",
