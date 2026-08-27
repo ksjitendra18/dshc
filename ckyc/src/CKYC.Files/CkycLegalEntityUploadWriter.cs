@@ -227,9 +227,12 @@ public sealed class CkycLegalEntityUploadWriter
         f[13] = Coalesce(reg.ProofOfAddress, "A");
         f[14] = Coalesce(reg.OtherDocumentName, "");
 
-        // Principal place of business.
-        f[15] = prin?.SameAsRegistered ?? (prin is null ? "Y" : "N");
-        if (prin is not null)
+        // Principal place of business. The FVU requires every principal field to be blank
+        // when 'Same as Registered Address' is Y (ERR_310/311/313/314/315/316/319/320),
+        // even if the record carries default-filled principal details.
+        var sameAsRegistered = prin?.SameAsRegistered ?? (prin is null ? "Y" : "N");
+        f[15] = sameAsRegistered;
+        if (prin is not null && !Is(sameAsRegistered, "Y"))
         {
             f[16] = prin.Line1; f[17] = prin.Line2; f[18] = prin.Line3;
             f[19] = prin.City; f[20] = prin.State; f[21] = prin.District;
@@ -239,9 +242,10 @@ public sealed class CkycLegalEntityUploadWriter
             f[27] = Coalesce(prin.OtherDocumentName, "");
         }
 
-        // Supporting documents.
+        // Supporting documents. The registered-address document is always required; the
+        // principal-address document only applies when 'Same as Registered Address' is N.
         f[28] = Doc(r.CustomerId, Coalesce(r.RegisteredAddressDocument, "RegAddress.pdf"));
-        f[29] = Doc(r.CustomerId, Coalesce(r.PrincipalAddressDocument, "PrinAddress.pdf"));
+        f[29] = Is(sameAsRegistered, "Y") ? "" : Doc(r.CustomerId, Coalesce(r.PrincipalAddressDocument, "PrinAddress.pdf"));
 
         return string.Join('|', f);
     }
@@ -270,7 +274,12 @@ public sealed class CkycLegalEntityUploadWriter
         f[1] = lineNo.ToString();
         f[2] = r20Line.ToString();
         f[3] = record.RelatedParties.Count.ToString();
-        f[4] = record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)).ToString();
+        // 'W/w No of Beneficial Owner' is not applicable for constitutions that do not
+        // maintain a beneficial-owner registry (FVU ERR_147 for constitution A) — the
+        // count is emitted only for constitutions that require a beneficial owner.
+        var beneficialOwners = record.RelatedParties.Count(x =>
+            string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase));
+        f[4] = LeConstitution.RequiresBeneficialOwner(record.EntityConstitution) ? beneficialOwners.ToString() : "";
         f[5] = rp.Relation;
         f[6] = Coalesce(rp.CkycNumber, "");
         // Controlling interest / percentage of ownership apply only to Beneficial Owner

@@ -87,7 +87,7 @@ public sealed class InsertLegalCommand : ICommand
             : ctx.CrmLegalEntities.GetLegalEntity(legal.CustomerId, legal.EntityConstitution);
 
         if (legal.Proofs.Count == 0 && defaults.Proofs.Count > 0) legal.Proofs = defaults.Proofs;
-        else if (legal.Proofs.Count > 0 && defaults.Proofs.Count > 0) FillMissingStrings(legal.Proofs[0], defaults.Proofs[0]);
+        else if (legal.Proofs.Count > 0 && defaults.Proofs.Count > 0) FillMandatoryProofs(legal.Proofs[0], defaults.Proofs[0]);
         if (legal.RegisteredAddress is null) legal.RegisteredAddress = defaults.RegisteredAddress;
         else if (defaults.RegisteredAddress is not null) FillMissingStrings(legal.RegisteredAddress, defaults.RegisteredAddress);
         if (legal.PrincipalAddress is null) legal.PrincipalAddress = defaults.PrincipalAddress;
@@ -112,11 +112,17 @@ public sealed class InsertLegalCommand : ICommand
         if (!string.Equals(legal.Form97?.Trim(), "Y", StringComparison.OrdinalIgnoreCase)) legal.Pan = Missing(legal.Pan, defaults.Pan);
         legal.PanVerified = Missing(legal.PanVerified, defaults.PanVerified);
         legal.PanDocument = Missing(legal.PanDocument, defaults.PanDocument);
-        legal.TinGstNumber = Missing(legal.TinGstNumber, defaults.TinGstNumber);
-        legal.TinGstnDocument = Missing(legal.TinGstnDocument, defaults.TinGstnDocument);
         legal.Form97 = Missing(legal.Form97, defaults.Form97);
         legal.RegisteredAddressDocument = Missing(legal.RegisteredAddressDocument, defaults.RegisteredAddressDocument);
         legal.PrincipalAddressDocument = Missing(legal.PrincipalAddressDocument, defaults.PrincipalAddressDocument);
+
+        // When 'Same as Registered Address' is Y the FVU requires the entire principal block
+        // (and its document) to be blank — never carry default-filled principal details.
+        if (legal.PrincipalAddress is not null && Is(legal.PrincipalAddress.SameAsRegistered, "Y"))
+        {
+            ClearPrincipalAddress(legal.PrincipalAddress);
+            legal.PrincipalAddressDocument = null;
+        }
     }
 
     private static void FillMissingStrings<T>(T target, T defaults)
@@ -125,6 +131,40 @@ public sealed class InsertLegalCommand : ICommand
             if (string.IsNullOrWhiteSpace((string?)property.GetValue(target)))
                 property.SetValue(target, property.GetValue(defaults));
     }
+
+    // The dummy-CRM default carries every optional POI document, but the FVU only needs the
+    // ones the format requires. Inject only the mandatory POI fields for the record's
+    // constitution and never auto-add an optional one — otherwise those optional docs are
+    // referenced and block build-zip with a "not imported" failure.
+    private static readonly HashSet<string> OptionalProofDocuments = new(StringComparer.Ordinal)
+    {
+        nameof(LeProofOfIdentity.OthersCompany), nameof(LeProofOfIdentity.OthersPartnership),
+        nameof(LeProofOfIdentity.OthersTrust), nameof(LeProofOfIdentity.OthersUnincorporated),
+        nameof(LeProofOfIdentity.OtherTypeRegistrationCertificate), nameof(LeProofOfIdentity.ActivityProof1),
+        nameof(LeProofOfIdentity.ActivityProof2), nameof(LeProofOfIdentity.OthersOtherType),
+        nameof(LeProofOfIdentity.UnincorporatedRegistrationCertificate),
+    };
+
+    private static void FillMandatoryProofs(LeProofOfIdentity target, LeProofOfIdentity defaults)
+    {
+        foreach (var property in typeof(LeProofOfIdentity).GetProperties()
+                     .Where(p => p.PropertyType == typeof(string) && p.CanRead && p.CanWrite))
+        {
+            if (OptionalProofDocuments.Contains(property.Name)) continue;
+            if (string.IsNullOrWhiteSpace((string?)property.GetValue(target)))
+                property.SetValue(target, property.GetValue(defaults));
+        }
+    }
+
+    private static void ClearPrincipalAddress(LeAddressDetails address)
+    {
+        address.Line1 = address.Line2 = address.Line3 = address.City = address.State = "";
+        address.District = address.PinCode = address.PinCodeOthers = address.Country = "";
+        address.ProofOfAddress = address.OtherDocumentName = address.Digipin = "";
+    }
+
+    private static bool Is(string? value, string expected) =>
+        string.Equals(value?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
 
     private static string? Missing(string? value, string? fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value;

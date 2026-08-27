@@ -1,5 +1,5 @@
 {
-  "customerId": "CUST-RETAIL-SKS",
+  "customerId": "CUST-RETAIL-SKSS",
   "searchKey": "IOV26082643520327392",
   "kycType": "N",
   "name": {
@@ -89,7 +89,7 @@
     "faceToFaceWithReOfficial": "Y",
     "faceToFaceWithNonOfficial": "N",
     "nonFaceToFace": "N",
-    "attestationDate": "26-08-2026",
+    "attestationDate": "27-08-2026",
     "employeeName": "Sahilsharma",
     "employeeCode": "PNB4437",
     "employeeDesignation": "SM",
@@ -101,6 +101,6 @@
     "declarationFlag": "Y",
     "clientConsent": "C3.pdf",
     "place": "Mumbai",
-    "declarationDate": "26-08-2026"
+    "declarationDate": "27-08-2026"
   }
 }

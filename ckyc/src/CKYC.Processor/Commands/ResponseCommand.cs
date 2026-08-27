@@ -13,7 +13,7 @@ namespace CKYC.Processor.Commands;
 /// the <c>LastResponse*</c> summary columns).
 ///
 /// Usage:
-///   CKYCProcessor.exe response read                            # last batch, default output folder
+///   CKYCProcessor.exe response read                            # last batch, configured response folder
 ///   CKYCProcessor.exe response read --batch &lt;key&gt;           # a specific batch
 ///   CKYCProcessor.exe response read --dir &lt;folder&gt;            # scan a folder for .RES files
 ///   CKYCProcessor.exe response read --file &lt;path&gt;             # a single response file
@@ -231,6 +231,9 @@ public sealed class ResponseCommand : ICommand
 
     private static string ResolveDir(AppContext ctx, GeneratedBatch batch, string[] args)
         => Option(args, "--dir")
+           ?? (string.IsNullOrWhiteSpace(ctx.Settings.Response.InputRoot)
+               ? null
+               : ctx.Settings.Response.InputRoot)
            ?? Path.Combine(ctx.Settings.Fvu.WorkspaceRoot, "runs", batch.BatchKey, "output");
 
     private static bool IsRejected(string? recordStatus, string? rejectionRemark)

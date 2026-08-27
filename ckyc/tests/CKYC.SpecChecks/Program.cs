@@ -51,6 +51,10 @@ static async Task ImportDocumentsAsync(IDocumentStore store, long masterId, IEnu
 
 AssertValid(Read(), "retail sample");
 
+var adultWithoutRelatedParties = Read();
+adultWithoutRelatedParties.RelatedParties.Clear();
+AssertValid(adultWithoutRelatedParties, "adult without optional related parties");
+
 var sameCurrentAddress = Read();
 var permanent = sameCurrentAddress.PermanentAddress!;
 sameCurrentAddress.CurrentAddress = new AddressDetails
@@ -66,6 +70,8 @@ AssertValid(sameCurrentAddress, "legacy copied current address with same-as-perm
 var writer = new CkycUploadWriter(new BatchSettings());
 var lines = writer.Write([Read()], new DateOnly(2026, 8, 25))
     .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+if (lines.Any(line => line.StartsWith("60|", StringComparison.Ordinal)))
+    throw new InvalidOperationException("An adult without related parties unexpectedly emitted record 60.");
 var expectedWidths = new Dictionary<string, int>
 {
     ["10"] = 11, ["20"] = 56, ["30"] = 22, ["40"] = 46, ["50"] = 10, ["70"] = 23,

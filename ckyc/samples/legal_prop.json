@@ -1,0 +1,76 @@
+{
+  "customerId": "ENT-LEGAL-PROP-001",
+  "searchKey": "LPROPDEMO1ENTPROPL01",
+  "entityName": "Jitendra Traders",
+  "entityConstitution": "A",
+
+  "dateOfIncorporation": "01-04-2021",
+  "placeOfIncorporation": "Mumbai",
+  "countryOfIncorporation": "IN",
+  "tinIssuingCountry": "IN",
+
+  "pan": "GYTPS2083A",
+  "panVerified": "Y",
+  "panDocument": "Pan.pdf",
+
+  "proofs": [
+    {
+      "supportingDocumentsPoi": "SupportingPoI.pdf",
+      "otherTypePowerOfAttorney": "PowerOfAttorney.pdf"
+    }
+  ],
+
+  "registeredAddress": {
+    "line1": "Shop 12, Ground Floor, Sai Plaza",
+    "line2": "LBS Marg, Kurla West",
+    "line3": "",
+    "city": "Mumbai",
+    "state": "MH",
+    "district": "225",
+    "pinCode": "400070",
+    "country": "IN",
+    "proofOfAddress": "A"
+  },
+  "principalAddress": {
+    "sameAsRegistered": "Y"
+  },
+  "registeredAddressDocument": "RegAddress.pdf",
+
+  "contact": {
+    "countryCode1": "+91",
+    "mobileNumber1": "9109869397",
+    "countryCode2": "+91",
+    "mobileNumber2": "9109869398",
+    "email1": "sayheyjitendra@gmail.com",
+    "email2": ""
+  },
+
+  "relatedParties": [
+    {
+      "relation": "Proprietor",
+      "ckycNumber": "21171176839909",
+      "controllingInterest": "Ownership",
+      "percentageOwnership": "100.00"
+    }
+  ],
+
+  "other": {
+    "remarks": "Sole proprietorship create sample",
+    "certifiedCopies": "Y",
+    "equivalentEDoc": "N",
+    "verificationFromDigiLocker": "N",
+    "attestationDate": "27-08-2026",
+    "employeeName": "Jitendra Sharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "31522241526045",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN9797",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "consentDocument": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "27-08-2026"
+  }
+}

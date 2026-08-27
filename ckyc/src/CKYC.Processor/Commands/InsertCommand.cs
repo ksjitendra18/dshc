@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CKYC.Core.Domain;
+using CKYC.Core.Spec;
 using NLog;
 
 namespace CKYC.Processor.Commands;
@@ -12,8 +13,9 @@ namespace CKYC.Processor.Commands;
 ///   CKYCProcessor.exe insert --file ./customer.json
 ///   CKYCProcessor.exe insert --customer-id CUST202608240099 --name "Amrish Puri" --dob 22-06-1932 ...
 ///
-/// Any detail record (proof/address/contact/related/other) you omit is filled with
-/// FVU-valid defaults, so even a minimal name+DOB produces a batch the FVU accepts.
+/// Missing proof, address, contact, and other-detail records are filled with FVU-valid
+/// defaults. Related parties are never synthesized; a customer below ten must explicitly
+/// provide the mandatory guardian details.
 /// </summary>
 public sealed class InsertCommand : ICommand
 {
@@ -40,6 +42,15 @@ public sealed class InsertCommand : ICommand
 
         // Fill any missing detail record with FVU-valid defaults (mirrors the dummy CRM).
         ApplyValidDefaults(ctx, individual);
+
+        var missingGuardian = CkycRecordValidator.Validate(individual).FirstOrDefault(error =>
+            string.Equals(error.RecordType, CkycRecords.RelatedParty, StringComparison.Ordinal) &&
+            string.Equals(error.FieldName, "Related Party Details", StringComparison.Ordinal));
+        if (missingGuardian is not null)
+        {
+            Log.Error("[insert] Validation failed: {Error}", missingGuardian.ErrorDescription);
+            return 1;
+        }
 
         // Get-or-create the master row, then save the record tables.
         var businessDate = DateOnly.FromDateTime(DateTime.Today);
@@ -82,7 +93,6 @@ public sealed class InsertCommand : ICommand
         if (string.Equals(individual.CurrentAddressSameAsPermanent, "Y", StringComparison.OrdinalIgnoreCase))
             individual.CurrentAddress ??= new AddressDetails();
         if (individual.Contact is null) individual.Contact = defaults.Contact;
-        if (individual.RelatedParties.Count == 0) individual.RelatedParties = defaults.RelatedParties;
         if (individual.Other is null) individual.Other = defaults.Other;
         // record-20 document fields must reference a file that exists in support_docs
         if (string.IsNullOrEmpty(individual.PhotoOfIndividual)) individual.PhotoOfIndividual = defaults.PhotoOfIndividual;

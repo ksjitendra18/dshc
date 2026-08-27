@@ -250,8 +250,9 @@ produce several responses over time.
 response read [--batch <key>] [--dir <folder>] [--file <path>]
 ```
 
-- Defaults to the **last generated batch** and its FVU output folder
-  (`<fvu.workspaceRoot>/runs/<batchKey>/output`).
+- Defaults to the **last generated batch** and the configured `response.inputRoot` folder.
+  When that setting is omitted, it falls back to the legacy FVU output folder
+  (`<fvu.workspaceRoot>/runs/<batchKey>/output`). `--dir` and `--file` still override it.
 - The reply format (record `90` header + record `100` detail) is documented in the
   `Upload_response` sheet of `File_Format_Upload_Individual_1.0.xlsx`.
 - Each reply detail is matched back to its master record by the record-20 line number, then:
@@ -398,9 +399,9 @@ To add a customer with your **own** details (rather than the dummy CRM's auto-da
 step:
 
 1. Make a copy of `samples/customer.json` and edit the fields you care about (name, DOB,
-   email, mobile, address, etc.). Missing detail records (proof / address / contact /
-   related party / other) are auto-filled with FVU-valid defaults, so a minimal input still
-   works.
+   email, mobile, address, etc.). Missing proof, address, contact, and other-detail records
+   are auto-filled with FVU-valid defaults. Related parties are never auto-generated. A
+   customer below ten must explicitly include the mandatory guardian in `relatedParties`.
 2. (Optional) start the CRM once so `insert` can borrow the valid defaults, or supply every
    detail record in the JSON so no CRM is needed:
    ```powershell

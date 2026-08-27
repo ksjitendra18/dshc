@@ -7,5 +7,5 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 & $exe status
 
 dotnet run --project src/CKYC.Processor -- `  documents import`
---customer-id CUST-RETAIL-SKS `
---dir staging/CUST-RETAIL-SKS
+>>--customer-id CUST-RETAIL-SKS `
+>> --dir staging/CUST-RETAIL-SKS

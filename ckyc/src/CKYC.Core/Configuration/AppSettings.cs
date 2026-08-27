@@ -11,10 +11,18 @@ public sealed class AppSettings
     public CrmSettings Crm { get; set; } = new();
     public BatchSettings Batch { get; set; } = new();
     public FvuSettings Fvu { get; set; } = new();
+    public ResponseSettings Response { get; set; } = new();
     public SimulationSettings Simulation { get; set; } = new();
     public RetrySettings Retry { get; set; } = new();
     public SearchSettings Search { get; set; } = new();
     public UpdateSettings Update { get; set; } = new();
+}
+
+/// <summary>CERSAI upload-response (.UPL.RESm) input settings.</summary>
+public sealed class ResponseSettings
+{
+    // When omitted, response read retains the legacy FVU batch-output location.
+    public string? InputRoot { get; set; }
 }
 
 /// <summary>CKYCR bulk-update (.UPD) file settings — individual and legal entity updates.</summary>
