@@ -42,7 +42,9 @@ Set-Location D:\centralprocessing\ckyc
 # 2) Convenience variable used throughout this manual:
 $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 $s   = ".\samples\failure"          # seed root
-$sqlite3 = "D:\Programs\sqlite3\sqlite3.exe"
+$sqlcmd = "sqlcmd"
+$server = "(localdb)\MSSQLLocalDB"
+$database = "CkycCentral"
 ```
 
 - **FVU (steps 5–6):** the real `FVU_RUN_UTILITY.exe` is used
@@ -52,7 +54,7 @@ $sqlite3 = "D:\Programs\sqlite3\sqlite3.exe"
   elevated (see `README.md`). Scenario T6 **requires the real FVU** — the
   deterministic simulated runner (`useRealFvu=false`) always passes and cannot
   reproduce a missing-document failure.
-- **sqlite3 CLI:** only needed for the retry “expedite” step (`expedite-retry.sql`).
+- **sqlcmd:** used to provision/reset LocalDB and run the retry expedite script.
 
 ---
 
@@ -63,7 +65,8 @@ composition and counts are predictable:
 
 ```powershell
 # Stop any `crm serve` process first (Ctrl+C / Stop-Process on the window).
-Remove-Item .\runtime\ckyc.db -ErrorAction SilentlyContinue   # schema is re-created on startup
+& $sqlcmd -S $server -d master -b -Q "IF DB_ID('$database') IS NOT NULL BEGIN ALTER DATABASE [$database] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [$database]; END; CREATE DATABASE [$database];"
+& $sqlcmd -S $server -d $database -b -i .\scripts\sqlserver\schema.sql
 Remove-Item .\runtime\output\* -Recurse -ErrorAction SilentlyContinue
 Remove-Item .\runtime\runs\* -Recurse -ErrorAction SilentlyContinue
 ```
@@ -100,7 +103,7 @@ The backoff is seeded at **24 h** (hard-coded in `src/CKYC.Data/Schema/Ddl.cs`),
 so before retrying we make the failed records due immediately:
 
 ```powershell
-& $sqlite3 .\runtime\ckyc.db ".read $s\scripts\expedite-retry.sql"
+& $sqlcmd -S $server -d $database -b -i "$s\scripts\expedite-retry.sql"
 
 & $exe --settings "$s\settings-fetch-cbs-fail.json" retry --activity CbsFetch
 ```
@@ -145,9 +148,9 @@ Expected — 8 saved, `TEST-SAVE-FAIL-01` fails (retry 1):
 Now run the retry cycle 3× (expedite the backoff before each attempt):
 
 ```powershell
-& $sqlite3 .\runtime\ckyc.db ".read $s\scripts\expedite-retry.sql"
+& $sqlcmd -S $server -d $database -b -i "$s\scripts\expedite-retry.sql"
 & $exe --settings "$s\settings-save-fail.json" retry          # attempt 2 -> fails again (DueLater)
-& $sqlite3 .\runtime\ckyc.db ".read $s\scripts\expedite-retry.sql"
+& $sqlcmd -S $server -d $database -b -i "$s\scripts\expedite-retry.sql"
 & $exe --settings "$s\settings-save-fail.json" retry          # attempt 3 -> exhausted
 ```
 
@@ -222,7 +225,7 @@ Expected — 2 of 9 fail (positions 4 and 8 → `CUST-FLOW-0004`,
 Recover them:
 
 ```powershell
-& $sqlite3 .\runtime\ckyc.db ".read $s\scripts\expedite-retry.sql"
+& $sqlcmd -S $server -d $database -b -i "$s\scripts\expedite-retry.sql"
 & $exe --settings "$s\settings-save-every.json" retry
 ```
 

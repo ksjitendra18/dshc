@@ -47,6 +47,8 @@ public static class CkycResponseParser
 
     private static ResponseHeader ParseHeader(string fileName, string[] p)
     {
+        if (p.Length < 9)
+            throw new InvalidDataException($"Response file '{fileName}' has an incomplete record-90 header.");
         // Record 90 fields (0-based): [0] type, [1] client, [2] FI code, [3] region,
         // [4] total, [5] processed, [6] under processing, [7] failed, [8] timestamp.
         return new ResponseHeader(
@@ -59,6 +61,8 @@ public static class CkycResponseParser
 
     private static ResponseDetail ParseDetail(string[] p)
     {
+        if (p.Length < 8)
+            throw new InvalidDataException("Response contains an incomplete record-100 detail.");
         // Record 100 fields (0-based): [0] type, [1] line no, [2] input record-20 line no,
         // [3] ack no, [4] record status, [5] CKYC reference no, [6] CKYC no, [7] rejection remark.
         return new ResponseDetail(

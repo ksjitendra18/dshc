@@ -19,7 +19,7 @@ public sealed class AppContext
         Settings = settings;
 
         CustomerIds = new DailyCustomerIdProvider(settings.Source);
-        Database = new SqliteDatabase(settings.Database);
+        Database = new SqlServerDatabase(settings.Database);
         Master = new MasterRepository(Database);
         Individuals = new IndividualRepository(Database);
         LegalEntities = new LegalEntityRepository(Database);
@@ -27,7 +27,9 @@ public sealed class AppContext
         Search = new SearchRepository(Database);
         Updates = new UpdateRepository(Database);
         Downloads = new DownloadRepository(Database);
-        Documents = new SqliteDocumentStore(Database);
+        IndividualDocuments = new IndividualDocumentStore(Database);
+        LegalEntityDocuments = new LegalEntityDocumentStore(Database);
+        Documents = IndividualDocuments;
 
         CrmData = new DummyCrmDataProvider();
         CrmLegalEntities = new DummyCrmLegalEntityProvider();
@@ -53,6 +55,9 @@ public sealed class AppContext
     public ISearchRepository Search { get; }
     public IUpdateRepository Updates { get; }
     public IDownloadRepository Downloads { get; }
+    /// <summary>Per-client-type document stores. Documents routes to the individual store (default view).</summary>
+    public IDocumentStore IndividualDocuments { get; }
+    public IDocumentStore LegalEntityDocuments { get; }
     public IDocumentStore Documents { get; }
 
     public DummyCrmDataProvider CrmData { get; }

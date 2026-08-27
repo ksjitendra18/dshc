@@ -1,13 +1,18 @@
-using System.Data;
-using System.Data.Common;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
 using CKYC.Core.Spec;
-using static CKYC.Data.MasterRepository;
+using Microsoft.EntityFrameworkCore;
+using LegalEntityRecord20Entity = CKYC.Data.Entities.LegalEntityRecord20;
+using LegalEntityRecord30Entity = CKYC.Data.Entities.LegalEntityRecord30;
+using LegalEntityRecord40Entity = CKYC.Data.Entities.LegalEntityRecord40;
+using LegalEntityRecord50Entity = CKYC.Data.Entities.LegalEntityRecord50;
+using LegalEntityRecord60Entity = CKYC.Data.Entities.LegalEntityRecord60;
+using LegalEntityRecord70Entity = CKYC.Data.Entities.LegalEntityRecord70;
 
 namespace CKYC.Data;
 
+/// <summary>EF Core (SQL Server) persistence for the legal-entity record tables (20–70).</summary>
 public sealed class LegalEntityRepository : ILegalEntityRepository
 {
     private readonly ICkycDatabase _db;
@@ -24,30 +29,29 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
             return new SaveRecordResult(record.MasterRecordId, false,
                 string.Join("; ", validationErrors.Select(e => $"[{e.RecordType}/{e.FieldName}] {e.ErrorDescription}")), null);
 
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
-
         try
         {
-            await DeleteExistingAsync(conn, localTx, record.MasterRecordId, ct);
+            await using var db = _db.CreateContext();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-            var now = DateTime.UtcNow.ToString("o");
-            await InsertRecord20(conn, localTx, record, now, ct);
-            await InsertRecord30(conn, localTx, record.MasterRecordId, record.CustomerId, FirstProof(record), ct);
-            await InsertRecord40(conn, localTx, record, ct);
-            await InsertRecord50(conn, localTx, record, ct);
+            await DeleteExistingAsync(db, record.MasterRecordId, ct);
+
+            var now = DateTime.UtcNow;
+            InsertRecord20(db, record, now);
+            InsertRecord30(db, record.MasterRecordId, record.CustomerId, FirstProof(record));
+            InsertRecord40(db, record);
+            InsertRecord50(db, record);
             foreach (var rp in record.RelatedParties)
-                await InsertRecord60(conn, localTx, record, rp, ct);
-            await InsertRecord70(conn, localTx, record, ct);
+                InsertRecord60(db, record, rp);
+            InsertRecord70(db, record);
 
+            await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return new SaveRecordResult(record.MasterRecordId, true, null,
                 $"Saved entity details + POI, addresses, contact, {record.RelatedParties.Count} related party(ies), attestation");
         }
         catch (Exception ex)
         {
-            await tx.RollbackAsync(ct);
             return new SaveRecordResult(record.MasterRecordId, false, ex.Message, null);
         }
     }
@@ -55,335 +59,262 @@ public sealed class LegalEntityRepository : ILegalEntityRepository
     public async Task<IReadOnlyList<LegalEntity>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
     {
         if (customerIds.Count == 0) return Array.Empty<LegalEntity>();
-        var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
+        await using var db = _db.CreateContext();
 
-        await using var conn = _db.Create();
-        var result = new List<LegalEntity>();
-        await using (var cmd = conn.CreateCommand())
+        var r20s = await db.LegalEntityRecord20s.AsNoTracking()
+            .Where(r => customerIds.Contains(r.CustomerId!))
+            .ToListAsync(ct);
+        if (r20s.Count == 0) return Array.Empty<LegalEntity>();
+
+        var masterIds = r20s.Select(r => r.MasterRecordId ?? 0).Where(id => id > 0).ToList();
+
+        var r30s = await db.LegalEntityRecord30s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r40s = await db.LegalEntityRecord40s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r50s = await db.LegalEntityRecord50s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r60s = await db.LegalEntityRecord60s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r70s = await db.LegalEntityRecord70s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+
+        var r30ByMaster = r30s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r40ByMaster = r40s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r50ByMaster = r50s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r60ByMaster = r60s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r70ByMaster = r70s.ToLookup(r => r.MasterRecordId ?? 0);
+
+        var result = new List<LegalEntity>(r20s.Count);
+        foreach (var r20 in r20s)
         {
-            var i = 0;
-            foreach (var id in customerIds) cmd.Parameters.Add(NewParam($"@v{i++}", id));
-            cmd.CommandText = $"SELECT * FROM legal_entity_record_20 WHERE CustomerId IN ({placeholders})";
-            await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct))
+            var masterId = r20.MasterRecordId ?? 0;
+            var le = ReadRecord20(r20);
+            le.MasterRecordId = masterId;
+            le.CustomerId = r20.CustomerId ?? string.Empty;
+            le.Proofs = r30ByMaster[masterId].Select(ReadRecord30).ToList();
+            le.RelatedParties = r60ByMaster[masterId].Select(ReadRecord60).ToList();
+
+            var r40 = r40ByMaster[masterId].FirstOrDefault();
+            if (r40 is not null)
             {
-                var le = ReadRecord20(r);
-                le.MasterRecordId = Convert.ToInt64(r["MasterRecordId"]);
-                le.CustomerId = r["CustomerId"] as string ?? string.Empty;
-                le.Proofs = new List<LeProofOfIdentity>();
-                le.RelatedParties = new List<LeRelatedParty>();
-                result.Add(le);
+                le.RegisteredAddress = ToAddress(r40, "Reg");
+                le.PrincipalAddress = ToAddress(r40, "Prin");
+                le.RegisteredAddressDocument = r40.RegDocument;
+                le.PrincipalAddressDocument = r40.PrinDocument;
             }
-        }
-
-        foreach (var le in result)
-        {
-            le.Proofs = await LoadRecord30Async(conn, le.MasterRecordId, ct);
-            await LoadRecord40Async(conn, le, ct);
-            le.Contact = await LoadRecord50Async(conn, le.MasterRecordId, ct);
-            le.RelatedParties = await LoadRecord60Async(conn, le.MasterRecordId, ct);
-            le.Other = await LoadRecord70Async(conn, le.MasterRecordId, ct);
+            le.Contact = r50ByMaster[masterId].Select(ReadRecord50).FirstOrDefault();
+            le.Other = r70ByMaster[masterId].Select(ReadRecord70).FirstOrDefault();
+            result.Add(le);
         }
         return result;
     }
 
-    // ---------- load helpers ----------
-    private static async Task<List<LeProofOfIdentity>> LoadRecord30Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static LeProofOfIdentity ReadRecord30(LegalEntityRecord30Entity r) => new()
     {
-        var list = new List<LeProofOfIdentity>();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM legal_entity_record_30 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-        {
-            string? G(string c) => r[c] as string;
-            list.Add(new LeProofOfIdentity
-            {
-                CertificateOfIncorporation = G("CertificateOfIncorporation"), Cin = G("Cin"),
-                MemorandumAndArticles = G("MemorandumAndArticles"), ResolutionBoardPoA = G("ResolutionBoardPoA"),
-                NamesSeniorManagement = G("NamesSeniorManagement"), CertificateOfCommencement = G("CertificateOfCommencement"),
-                OthersCompany = G("OthersCompany"),
-                RegistrationCertificate = G("RegistrationCertificate"), RegistrationNumber = G("RegistrationNumber"),
-                LlpinCertificate = G("LlpinCertificate"), Llpin = G("Llpin"), PartnershipDeed = G("PartnershipDeed"),
-                NamesAllPartners = G("NamesAllPartners"), OthersPartnership = G("OthersPartnership"),
-                TrustRegistrationCertificate = G("TrustRegistrationCertificate"), TrustRegistrationNumber = G("TrustRegistrationNumber"),
-                TrustDeed = G("TrustDeed"), NamesBeneficiariesTrustees = G("NamesBeneficiariesTrustees"),
-                TrustPowerOfAttorney = G("TrustPowerOfAttorney"), OthersTrust = G("OthersTrust"),
-                UnincorporatedRegistrationCertificate = G("UnincorporatedRegCertificate"), UnincorporatedRegistrationNumber = G("UnincorporatedRegNumber"),
-                ResolutionManagingBody = G("ResolutionManagingBody"), UnincorporatedPowerOfAttorney = G("UnincorporatedPowerOfAttorney"),
-                InfoEstablishExistence = G("InfoEstablishExistence"), OthersUnincorporated = G("OthersUnincorporated"),
-                SupportingDocumentsPoi = G("SupportingDocumentsPoi"), OtherTypeRegistrationNumber = G("OtherTypeRegistrationNumber"),
-                OtherTypeRegistrationCertificate = G("OtherTypeRegistrationCertificate"), OtherTypePowerOfAttorney = G("OtherTypePowerOfAttorney"),
-                ActivityProof1 = G("ActivityProof1"), ActivityProof2 = G("ActivityProof2"), OthersOtherType = G("OthersOtherType"),
-            });
-        }
-        return list;
-    }
+        CertificateOfIncorporation = r.CertificateOfIncorporation, Cin = r.Cin,
+        MemorandumAndArticles = r.MemorandumAndArticles, ResolutionBoardPoA = r.ResolutionBoardPoA,
+        NamesSeniorManagement = r.NamesSeniorManagement, CertificateOfCommencement = r.CertificateOfCommencement,
+        OthersCompany = r.OthersCompany,
+        RegistrationCertificate = r.RegistrationCertificate, RegistrationNumber = r.RegistrationNumber,
+        LlpinCertificate = r.LlpinCertificate, Llpin = r.Llpin, PartnershipDeed = r.PartnershipDeed,
+        NamesAllPartners = r.NamesAllPartners, OthersPartnership = r.OthersPartnership,
+        TrustRegistrationCertificate = r.TrustRegistrationCertificate, TrustRegistrationNumber = r.TrustRegistrationNumber,
+        TrustDeed = r.TrustDeed, NamesBeneficiariesTrustees = r.NamesBeneficiariesTrustees,
+        TrustPowerOfAttorney = r.TrustPowerOfAttorney, OthersTrust = r.OthersTrust,
+        UnincorporatedRegistrationCertificate = r.UnincorporatedRegCertificate, UnincorporatedRegistrationNumber = r.UnincorporatedRegNumber,
+        ResolutionManagingBody = r.ResolutionManagingBody, UnincorporatedPowerOfAttorney = r.UnincorporatedPowerOfAttorney,
+        InfoEstablishExistence = r.InfoEstablishExistence, OthersUnincorporated = r.OthersUnincorporated,
+        SupportingDocumentsPoi = r.SupportingDocumentsPoi, OtherTypeRegistrationNumber = r.OtherTypeRegistrationNumber,
+        OtherTypeRegistrationCertificate = r.OtherTypeRegistrationCertificate, OtherTypePowerOfAttorney = r.OtherTypePowerOfAttorney,
+        ActivityProof1 = r.ActivityProof1, ActivityProof2 = r.ActivityProof2, OthersOtherType = r.OthersOtherType,
+    };
 
-    private static async Task LoadRecord40Async(DbConnection conn, LegalEntity le, CancellationToken ct)
+    private static LeAddressDetails ToAddress(LegalEntityRecord40Entity r, string pfx)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM legal_entity_record_40 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", le.MasterRecordId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return;
-        string? G(string c) => r[c] as string;
-        le.RegisteredAddress = ToAddress(G, "Reg");
-        le.PrincipalAddress = ToAddress(G, "Prin");
-        le.RegisteredAddressDocument = G("RegDocument");
-        le.PrincipalAddressDocument = G("PrinDocument");
-    }
-
-    private static LeAddressDetails? ToAddress(Func<string, string?> g, string pfx)
-        => new()
+        string? G(string c) => c switch
         {
-            Line1 = g($"{pfx}Line1") ?? "", Line2 = g($"{pfx}Line2") ?? "", Line3 = g($"{pfx}Line3") ?? "",
-            City = g($"{pfx}City") ?? "", State = g($"{pfx}State") ?? "", District = g($"{pfx}District") ?? "",
-            PinCode = g($"{pfx}PinCode") ?? "", PinCodeOthers = g($"{pfx}PinOthers"), Digipin = g($"{pfx}Digipin"),
-            Country = g($"{pfx}Country") ?? "IN", ProofOfAddress = g($"{pfx}ProofOfAddress") ?? "A",
-            OtherDocumentName = g($"{pfx}OtherDocumentName"), SameAsRegistered = pfx == "Prin" ? g("SameAsRegistered") : null,
+            "RegLine1" => r.RegLine1, "RegLine2" => r.RegLine2, "RegLine3" => r.RegLine3,
+            "RegCity" => r.RegCity, "RegState" => r.RegState, "RegDistrict" => r.RegDistrict,
+            "RegPinCode" => r.RegPinCode, "RegPinOthers" => r.RegPinOthers, "RegDigipin" => r.RegDigipin,
+            "RegCountry" => r.RegCountry, "RegProofOfAddress" => r.RegProofOfAddress,
+            "RegOtherDocumentName" => r.RegOtherDocumentName,
+            "PrinLine1" => r.PrinLine1, "PrinLine2" => r.PrinLine2, "PrinLine3" => r.PrinLine3,
+            "PrinCity" => r.PrinCity, "PrinState" => r.PrinState, "PrinDistrict" => r.PrinDistrict,
+            "PrinPinCode" => r.PrinPinCode, "PrinPinOthers" => r.PrinPinOthers, "PrinDigipin" => r.PrinDigipin,
+            "PrinCountry" => r.PrinCountry, "PrinProofOfAddress" => r.PrinProofOfAddress,
+            "PrinOtherDocumentName" => r.PrinOtherDocumentName,
+            _ => null,
         };
-
-    private static async Task<LeContactDetails?> LoadRecord50Async(DbConnection conn, long masterId, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM legal_entity_record_50 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
-        string? G(string c) => r[c] as string;
-        return new LeContactDetails
+        return new LeAddressDetails
         {
-            CountryCode1 = G("CountryCode1") ?? "+91", MobileNumber1 = G("MobileNumber1"),
-            CountryCode2 = G("CountryCode2") ?? "+91", MobileNumber2 = G("MobileNumber2"),
-            Email1 = G("EmailId1"), Email2 = G("EmailId2"), Telephone = G("Telephone"), Fax = G("Fax"),
+            Line1 = G($"{pfx}Line1") ?? "", Line2 = G($"{pfx}Line2") ?? "", Line3 = G($"{pfx}Line3") ?? "",
+            City = G($"{pfx}City") ?? "", State = G($"{pfx}State") ?? "", District = G($"{pfx}District") ?? "",
+            PinCode = G($"{pfx}PinCode") ?? "", PinCodeOthers = G($"{pfx}PinOthers"), Digipin = G($"{pfx}Digipin"),
+            Country = G($"{pfx}Country") ?? "IN", ProofOfAddress = G($"{pfx}ProofOfAddress") ?? "A",
+            OtherDocumentName = G($"{pfx}OtherDocumentName"),
+            SameAsRegistered = pfx == "Prin" ? r.SameAsRegistered : null,
         };
     }
 
-    private static async Task<List<LeRelatedParty>> LoadRecord60Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static LeContactDetails ReadRecord50(LegalEntityRecord50Entity r) => new()
     {
-        var list = new List<LeRelatedParty>();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM legal_entity_record_60 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            list.Add(new LeRelatedParty
-            {
-                Relation = r["Relation"] as string ?? "", CkycNumber = r["CkycNumber"] as string ?? "",
-                ControllingInterest = r["ControllingInterest"] as string ?? "",
-                PercentageOwnership = r["PercentageOwnership"] as string, OtherRelationName = r["OtherRelationName"] as string,
-                Din = r["Din"] as string,
-            });
-        return list;
-    }
+        CountryCode1 = r.CountryCode1 ?? "+91", MobileNumber1 = r.MobileNumber1,
+        CountryCode2 = r.CountryCode2 ?? "+91", MobileNumber2 = r.MobileNumber2,
+        Email1 = r.EmailId1, Email2 = r.EmailId2, Telephone = r.Telephone, Fax = r.Fax,
+    };
 
-    private static async Task<LeOtherDetails?> LoadRecord70Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static LeRelatedParty ReadRecord60(LegalEntityRecord60Entity r) => new()
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM legal_entity_record_70 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
-        string? G(string c) => r[c] as string;
-        return new LeOtherDetails
+        Relation = r.Relation ?? "", CkycNumber = r.CkycNumber ?? "",
+        ControllingInterest = r.ControllingInterest ?? "",
+        PercentageOwnership = r.PercentageOwnership, OtherRelationName = r.OtherRelationName,
+        Din = r.Din,
+    };
+
+    private static LeOtherDetails ReadRecord70(LegalEntityRecord70Entity r) => new()
+    {
+        Remarks = r.Remarks, CertifiedCopies = r.CertifiedCopies ?? "Y", EquivalentEDoc = r.EquivalentEdoc ?? "N",
+        VerificationFromDigiLocker = r.VerificationFromDigiLocker ?? "N", AttestationDate = r.AttestationDate ?? "",
+        EmployeeName = r.EmployeeName ?? "", EmployeeCode = r.EmployeeCode ?? "",
+        EmployeeDesignation = r.EmployeeDesignation ?? "", EmployeeBranch = r.EmployeeBranch ?? "",
+        EmployeeCkycId = r.EmployeeCkycId ?? "", InstitutionName = r.InstitutionName ?? "",
+        InstitutionCode = r.InstitutionCode ?? "", DeclarationDocument = r.DeclarationDocument ?? "",
+        DeclarationFlag = r.DeclarationFlag ?? "Y", ConsentDocument = r.ConsentDocument ?? "",
+        Place = r.Place ?? "", DeclarationDate = r.DeclarationDate ?? "",
+    };
+
+    private static void InsertRecord20(CkycDbContext db, LegalEntity r, DateTime now)
+    {
+        db.LegalEntityRecord20s.Add(new LegalEntityRecord20Entity
         {
-            Remarks = G("Remarks"), CertifiedCopies = G("CertifiedCopies") ?? "Y", EquivalentEDoc = G("EquivalentEDoc") ?? "N",
-            VerificationFromDigiLocker = G("VerificationFromDigiLocker") ?? "N", AttestationDate = G("AttestationDate") ?? "",
-            EmployeeName = G("EmployeeName") ?? "", EmployeeCode = G("EmployeeCode") ?? "",
-            EmployeeDesignation = G("EmployeeDesignation") ?? "", EmployeeBranch = G("EmployeeBranch") ?? "",
-            EmployeeCkycId = G("EmployeeCkycId") ?? "", InstitutionName = G("InstitutionName") ?? "",
-            InstitutionCode = G("InstitutionCode") ?? "", DeclarationDocument = G("DeclarationDocument") ?? "",
-            DeclarationFlag = G("DeclarationFlag") ?? "Y", ConsentDocument = G("ConsentDocument") ?? "",
-            Place = G("Place") ?? "", DeclarationDate = G("DeclarationDate") ?? "",
-        };
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId,
+            SearchKey = r.SearchKey, EntityName = r.EntityName, EntityConstitution = r.EntityConstitution,
+            ListedCompany = r.ListedCompany, RegisteredFirm = r.RegisteredFirm, RegisteredTrust = r.RegisteredTrust,
+            DateOfIncorporation = r.DateOfIncorporation, DateOfCommencement = r.DateOfCommencement,
+            PlaceOfIncorporation = r.PlaceOfIncorporation, CountryOfIncorporation = r.CountryOfIncorporation,
+            TinIssuingCountry = r.TinIssuingCountry, Pan = r.Pan, Form97 = r.Form97,
+            TinGstNumber = r.TinGstNumber, PanDocument = r.PanDocument, PanVerified = r.PanVerified,
+            TinGstnDocument = r.TinGstnDocument,
+            CreatedAt = now, UpdatedAt = now,
+        });
     }
 
-    // ---------- record 20 ----------
-    private static async Task InsertRecord20(DbConnection conn, DbTransaction tx, LegalEntity r, string now, CancellationToken ct)
+    private static void InsertRecord30(CkycDbContext db, long masterId, string customerId, LeProofOfIdentity? p)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_20
-                (MasterRecordId, CustomerId, SearchKey, EntityName, EntityConstitution,
-                 ListedCompany, RegisteredFirm, RegisteredTrust, DateOfIncorporation, DateOfCommencement,
-                 PlaceOfIncorporation, CountryOfIncorporation, TinIssuingCountry, Pan, Form97,
-                 TinGstNumber, PanDocument, PanVerified, TinGstnDocument, CreatedAt, UpdatedAt)
-            VALUES
-                (@m, @sid, @sk, @nm, @con,
-                 @listed, @firm, @trust, @doi, @doc,
-                 @poi, @coi, @tic, @pan, @f97,
-                 @tin, @panDoc, @panV, @tinDoc, @now, @now)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.CustomerId);
-        Add(cmd, "@sk", r.SearchKey); Add(cmd, "@nm", r.EntityName); Add(cmd, "@con", r.EntityConstitution);
-        Add(cmd, "@listed", r.ListedCompany); Add(cmd, "@firm", r.RegisteredFirm); Add(cmd, "@trust", r.RegisteredTrust);
-        Add(cmd, "@doi", r.DateOfIncorporation); Add(cmd, "@doc", r.DateOfCommencement);
-        Add(cmd, "@poi", r.PlaceOfIncorporation); Add(cmd, "@coi", r.CountryOfIncorporation);
-        Add(cmd, "@tic", r.TinIssuingCountry); Add(cmd, "@pan", r.Pan); Add(cmd, "@f97", r.Form97);
-        Add(cmd, "@tin", r.TinGstNumber); Add(cmd, "@panDoc", r.PanDocument); Add(cmd, "@panV", r.PanVerified);
-        Add(cmd, "@tinDoc", r.TinGstnDocument);
-        Add(cmd, "@now", now);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.LegalEntityRecord30s.Add(new LegalEntityRecord30Entity
+        {
+            MasterRecordId = masterId, CustomerId = customerId, Record20LineNumber = 1,
+            CertificateOfIncorporation = p?.CertificateOfIncorporation, Cin = p?.Cin,
+            MemorandumAndArticles = p?.MemorandumAndArticles, ResolutionBoardPoA = p?.ResolutionBoardPoA,
+            NamesSeniorManagement = p?.NamesSeniorManagement, CertificateOfCommencement = p?.CertificateOfCommencement,
+            OthersCompany = p?.OthersCompany,
+            RegistrationCertificate = p?.RegistrationCertificate, RegistrationNumber = p?.RegistrationNumber,
+            LlpinCertificate = p?.LlpinCertificate, Llpin = p?.Llpin, PartnershipDeed = p?.PartnershipDeed,
+            NamesAllPartners = p?.NamesAllPartners, OthersPartnership = p?.OthersPartnership,
+            TrustRegistrationCertificate = p?.TrustRegistrationCertificate, TrustRegistrationNumber = p?.TrustRegistrationNumber,
+            TrustDeed = p?.TrustDeed, NamesBeneficiariesTrustees = p?.NamesBeneficiariesTrustees,
+            TrustPowerOfAttorney = p?.TrustPowerOfAttorney, OthersTrust = p?.OthersTrust,
+            UnincorporatedRegCertificate = p?.UnincorporatedRegistrationCertificate,
+            UnincorporatedRegNumber = p?.UnincorporatedRegistrationNumber,
+            ResolutionManagingBody = p?.ResolutionManagingBody, UnincorporatedPowerOfAttorney = p?.UnincorporatedPowerOfAttorney,
+            InfoEstablishExistence = p?.InfoEstablishExistence, OthersUnincorporated = p?.OthersUnincorporated,
+            SupportingDocumentsPoi = p?.SupportingDocumentsPoi,
+            OtherTypeRegistrationNumber = p?.OtherTypeRegistrationNumber,
+            OtherTypeRegistrationCertificate = p?.OtherTypeRegistrationCertificate,
+            OtherTypePowerOfAttorney = p?.OtherTypePowerOfAttorney,
+            ActivityProof1 = p?.ActivityProof1, ActivityProof2 = p?.ActivityProof2, OthersOtherType = p?.OthersOtherType,
+        });
     }
 
-    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, string customerId, LeProofOfIdentity? p, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_30
-                (MasterRecordId, CustomerId, Record20LineNumber, CertificateOfIncorporation, Cin, MemorandumAndArticles,
-                 ResolutionBoardPoA, NamesSeniorManagement, CertificateOfCommencement, OthersCompany,
-                 RegistrationCertificate, RegistrationNumber, LlpinCertificate, Llpin, PartnershipDeed,
-                 NamesAllPartners, OthersPartnership, TrustRegistrationCertificate, TrustRegistrationNumber,
-                 TrustDeed, NamesBeneficiariesTrustees, TrustPowerOfAttorney, OthersTrust,
-                 UnincorporatedRegCertificate, UnincorporatedRegNumber, ResolutionManagingBody,
-                 UnincorporatedPowerOfAttorney, InfoEstablishExistence, OthersUnincorporated,
-                 SupportingDocumentsPoi, OtherTypeRegistrationNumber, OtherTypeRegistrationCertificate,
-                 OtherTypePowerOfAttorney, ActivityProof1, ActivityProof2, OthersOtherType)
-            VALUES
-                (@m, @customer, 1, @v1,@v2,@v3,@v4,@v5,@v6,@v7,@v8,@v9,@v10,@v11,@v12,@v13,@v14,@v15,@v16,@v17,@v18,@v19,@v20,
-                 @v21,@v22,@v23,@v24,@v25,@v26,@v27,@v28,@v29,@v30,@v31,@v32,@v33)
-            """;
-        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId);
-        Add(cmd, "@v1", p?.CertificateOfIncorporation); Add(cmd, "@v2", p?.Cin); Add(cmd, "@v3", p?.MemorandumAndArticles);
-        Add(cmd, "@v4", p?.ResolutionBoardPoA); Add(cmd, "@v5", p?.NamesSeniorManagement); Add(cmd, "@v6", p?.CertificateOfCommencement);
-        Add(cmd, "@v7", p?.OthersCompany); Add(cmd, "@v8", p?.RegistrationCertificate); Add(cmd, "@v9", p?.RegistrationNumber);
-        Add(cmd, "@v10", p?.LlpinCertificate); Add(cmd, "@v11", p?.Llpin); Add(cmd, "@v12", p?.PartnershipDeed);
-        Add(cmd, "@v13", p?.NamesAllPartners); Add(cmd, "@v14", p?.OthersPartnership); Add(cmd, "@v15", p?.TrustRegistrationCertificate);
-        Add(cmd, "@v16", p?.TrustRegistrationNumber); Add(cmd, "@v17", p?.TrustDeed); Add(cmd, "@v18", p?.NamesBeneficiariesTrustees);
-        Add(cmd, "@v19", p?.TrustPowerOfAttorney); Add(cmd, "@v20", p?.OthersTrust); Add(cmd, "@v21", p?.UnincorporatedRegistrationCertificate);
-        Add(cmd, "@v22", p?.UnincorporatedRegistrationNumber); Add(cmd, "@v23", p?.ResolutionManagingBody); Add(cmd, "@v24", p?.UnincorporatedPowerOfAttorney);
-        Add(cmd, "@v25", p?.InfoEstablishExistence); Add(cmd, "@v26", p?.OthersUnincorporated); Add(cmd, "@v27", p?.SupportingDocumentsPoi);
-        Add(cmd, "@v28", p?.OtherTypeRegistrationNumber); Add(cmd, "@v29", p?.OtherTypeRegistrationCertificate); Add(cmd, "@v30", p?.OtherTypePowerOfAttorney);
-        Add(cmd, "@v31", p?.ActivityProof1); Add(cmd, "@v32", p?.ActivityProof2); Add(cmd, "@v33", p?.OthersOtherType);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task InsertRecord40(DbConnection conn, DbTransaction tx, LegalEntity r, CancellationToken ct)
+    private static void InsertRecord40(CkycDbContext db, LegalEntity r)
     {
         var reg = r.RegisteredAddress;
         var prin = r.PrincipalAddress;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_40
-                (MasterRecordId, CustomerId, Record20LineNumber, RegLine1, RegLine2, RegLine3, RegCity, RegState, RegDistrict,
-                 RegPinCode, RegPinOthers, RegDigipin, RegCountry, RegProofOfAddress, RegOtherDocumentName, RegDocument,
-                 SameAsRegistered,
-                 PrinLine1, PrinLine2, PrinLine3, PrinCity, PrinState, PrinDistrict, PrinPinCode, PrinPinOthers,
-                 PrinDigipin, PrinCountry, PrinProofOfAddress, PrinOtherDocumentName, PrinDocument)
-            VALUES
-                (@m, @customer, 1, @r1,@r2,@r3,@rci,@rst,@rdi,@rpin,@rpinO,@rdig,@rco,@rpoa,@rod,@rdoc,
-                 @same,
-                 @p1,@p2,@p3,@pci,@pst,@pdi,@ppin,@ppinO,@pdig,@pco,@ppoa,@pod,@pdoc)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId);
-        Add(cmd, "@r1", reg?.Line1); Add(cmd, "@r2", reg?.Line2); Add(cmd, "@r3", reg?.Line3);
-        Add(cmd, "@rci", reg?.City); Add(cmd, "@rst", reg?.State); Add(cmd, "@rdi", reg?.District);
-        Add(cmd, "@rpin", reg?.PinCode); Add(cmd, "@rpinO", reg?.PinCodeOthers); Add(cmd, "@rdig", reg?.Digipin);
-        Add(cmd, "@rco", reg?.Country); Add(cmd, "@rpoa", reg?.ProofOfAddress); Add(cmd, "@rod", reg?.OtherDocumentName);
-        Add(cmd, "@rdoc", r.RegisteredAddressDocument);
-        Add(cmd, "@same", prin?.SameAsRegistered ?? (prin is null ? "Y" : "N"));
-        Add(cmd, "@p1", prin?.Line1); Add(cmd, "@p2", prin?.Line2); Add(cmd, "@p3", prin?.Line3);
-        Add(cmd, "@pci", prin?.City); Add(cmd, "@pst", prin?.State); Add(cmd, "@pdi", prin?.District);
-        Add(cmd, "@ppin", prin?.PinCode); Add(cmd, "@ppinO", prin?.PinCodeOthers); Add(cmd, "@pdig", prin?.Digipin);
-        Add(cmd, "@pco", prin?.Country); Add(cmd, "@ppoa", prin?.ProofOfAddress); Add(cmd, "@pod", prin?.OtherDocumentName);
-        Add(cmd, "@pdoc", r.PrincipalAddressDocument);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.LegalEntityRecord40s.Add(new LegalEntityRecord40Entity
+        {
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            RegLine1 = reg?.Line1, RegLine2 = reg?.Line2, RegLine3 = reg?.Line3,
+            RegCity = reg?.City, RegState = reg?.State, RegDistrict = reg?.District,
+            RegPinCode = reg?.PinCode, RegPinOthers = reg?.PinCodeOthers, RegDigipin = reg?.Digipin,
+            RegCountry = reg?.Country, RegProofOfAddress = reg?.ProofOfAddress, RegOtherDocumentName = reg?.OtherDocumentName,
+            RegDocument = r.RegisteredAddressDocument,
+            SameAsRegistered = prin?.SameAsRegistered ?? (prin is null ? "Y" : "N"),
+            PrinLine1 = prin?.Line1, PrinLine2 = prin?.Line2, PrinLine3 = prin?.Line3,
+            PrinCity = prin?.City, PrinState = prin?.State, PrinDistrict = prin?.District,
+            PrinPinCode = prin?.PinCode, PrinPinOthers = prin?.PinCodeOthers, PrinDigipin = prin?.Digipin,
+            PrinCountry = prin?.Country, PrinProofOfAddress = prin?.ProofOfAddress, PrinOtherDocumentName = prin?.OtherDocumentName,
+            PrinDocument = r.PrincipalAddressDocument,
+        });
     }
 
-    private static async Task InsertRecord50(DbConnection conn, DbTransaction tx, LegalEntity r, CancellationToken ct)
+    private static void InsertRecord50(CkycDbContext db, LegalEntity r)
     {
         var c = r.Contact;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_50 (MasterRecordId, CustomerId, Record20LineNumber, CountryCode1, MobileNumber1,
-                CountryCode2, MobileNumber2, EmailId1, EmailId2, Telephone, Fax)
-            VALUES (@m, @customer, 1, @cc1, @m1, @cc2, @m2, @e1, @e2, @tel, @fax)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@cc1", c?.CountryCode1); Add(cmd, "@m1", c?.MobileNumber1);
-        Add(cmd, "@cc2", c?.CountryCode2); Add(cmd, "@m2", c?.MobileNumber2); Add(cmd, "@e1", c?.Email1);
-        Add(cmd, "@e2", c?.Email2); Add(cmd, "@tel", c?.Telephone); Add(cmd, "@fax", c?.Fax);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.LegalEntityRecord50s.Add(new LegalEntityRecord50Entity
+        {
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            CountryCode1 = c?.CountryCode1, MobileNumber1 = c?.MobileNumber1,
+            CountryCode2 = c?.CountryCode2, MobileNumber2 = c?.MobileNumber2,
+            EmailId1 = c?.Email1, EmailId2 = c?.Email2, Telephone = c?.Telephone, Fax = c?.Fax,
+        });
     }
 
-    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, LegalEntity record, LeRelatedParty rp, CancellationToken ct)
+    private static void InsertRecord60(CkycDbContext db, LegalEntity record, LeRelatedParty rp)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_60 (MasterRecordId, CustomerId, Record20LineNumber, NumberOfRelatedPersons,
-                NumberOfBeneficialOwners, Relation, CkycNumber,
-                ControllingInterest, PercentageOwnership, OtherRelationName, Din)
-            VALUES (@m, @customer, 1, @relatedCount, @ownerCount, @rel, @ckyc, @ci, @pct, @orn, @din)
-            """;
-        Add(cmd, "@m", record.MasterRecordId); Add(cmd, "@customer", record.CustomerId); Add(cmd, "@rel", rp.Relation); Add(cmd, "@ckyc", rp.CkycNumber);
-        Add(cmd, "@relatedCount", record.RelatedParties.Count);
-        Add(cmd, "@ownerCount", record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)));
-        Add(cmd, "@ci", rp.ControllingInterest); Add(cmd, "@pct", rp.PercentageOwnership);
-        Add(cmd, "@orn", rp.OtherRelationName); Add(cmd, "@din", rp.Din);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.LegalEntityRecord60s.Add(new LegalEntityRecord60Entity
+        {
+            MasterRecordId = record.MasterRecordId, CustomerId = record.CustomerId, Record20LineNumber = 1,
+            NumberOfRelatedPersons = record.RelatedParties.Count,
+            NumberOfBeneficialOwners = record.RelatedParties.Count(x => string.Equals(x.Relation?.Trim(), "Beneficial Owner", StringComparison.OrdinalIgnoreCase)),
+            Relation = rp.Relation, CkycNumber = rp.CkycNumber,
+            ControllingInterest = rp.ControllingInterest, PercentageOwnership = rp.PercentageOwnership,
+            OtherRelationName = rp.OtherRelationName, Din = rp.Din,
+        });
     }
 
-    private static async Task InsertRecord70(DbConnection conn, DbTransaction tx, LegalEntity r, CancellationToken ct)
+    private static void InsertRecord70(CkycDbContext db, LegalEntity r)
     {
         var o = r.Other;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO legal_entity_record_70 (MasterRecordId, CustomerId, Record20LineNumber, Remarks, CertifiedCopies,
-                EquivalentEDoc, VerificationFromDigiLocker, AttestationDate, EmployeeName, EmployeeCode,
-                EmployeeDesignation, EmployeeBranch, EmployeeCkycId, InstitutionName, InstitutionCode,
-                DeclarationDocument, DeclarationFlag, ConsentDocument, Place, DeclarationDate)
-            VALUES (@m, @customer, 1, @rem, @cc, @eq, @digi, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cons, @pl, @dc)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@cc", o?.CertifiedCopies);
-        Add(cmd, "@eq", o?.EquivalentEDoc); Add(cmd, "@digi", o?.VerificationFromDigiLocker); Add(cmd, "@ad", o?.AttestationDate);
-        Add(cmd, "@en", o?.EmployeeName); Add(cmd, "@ec", o?.EmployeeCode); Add(cmd, "@ed", o?.EmployeeDesignation);
-        Add(cmd, "@eb", o?.EmployeeBranch); Add(cmd, "@eid", o?.EmployeeCkycId); Add(cmd, "@in", o?.InstitutionName);
-        Add(cmd, "@ic", o?.InstitutionCode); Add(cmd, "@dd", o?.DeclarationDocument); Add(cmd, "@df", o?.DeclarationFlag);
-        Add(cmd, "@cons", o?.ConsentDocument); Add(cmd, "@pl", o?.Place); Add(cmd, "@dc", o?.DeclarationDate);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.LegalEntityRecord70s.Add(new LegalEntityRecord70Entity
+        {
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            Remarks = o?.Remarks, CertifiedCopies = o?.CertifiedCopies,
+            EquivalentEdoc = o?.EquivalentEDoc, VerificationFromDigiLocker = o?.VerificationFromDigiLocker,
+            AttestationDate = o?.AttestationDate, EmployeeName = o?.EmployeeName, EmployeeCode = o?.EmployeeCode,
+            EmployeeDesignation = o?.EmployeeDesignation, EmployeeBranch = o?.EmployeeBranch, EmployeeCkycId = o?.EmployeeCkycId,
+            InstitutionName = o?.InstitutionName, InstitutionCode = o?.InstitutionCode,
+            DeclarationDocument = o?.DeclarationDocument, DeclarationFlag = o?.DeclarationFlag,
+            ConsentDocument = o?.ConsentDocument, Place = o?.Place, DeclarationDate = o?.DeclarationDate,
+        });
     }
 
-    private static async Task DeleteExistingAsync(DbConnection conn, DbTransaction tx, long masterId, CancellationToken ct)
+    private static async Task DeleteExistingAsync(CkycDbContext db, long masterId, CancellationToken ct)
     {
-        foreach (var table in new[] { "legal_entity_record_20", "legal_entity_record_30", "legal_entity_record_40", "legal_entity_record_50", "legal_entity_record_60", "legal_entity_record_70" })
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = $"DELETE FROM {table} WHERE MasterRecordId=@m";
-            cmd.Parameters.Add(NewParam("@m", masterId));
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
+        await db.Database.ExecuteSqlInterpolatedAsync($$"""
+            DELETE FROM legal_entity_record_20 WHERE MasterRecordId={{masterId}};
+            DELETE FROM legal_entity_record_30 WHERE MasterRecordId={{masterId}};
+            DELETE FROM legal_entity_record_40 WHERE MasterRecordId={{masterId}};
+            DELETE FROM legal_entity_record_50 WHERE MasterRecordId={{masterId}};
+            DELETE FROM legal_entity_record_60 WHERE MasterRecordId={{masterId}};
+            DELETE FROM legal_entity_record_70 WHERE MasterRecordId={{masterId}};
+            """, ct);
     }
 
     private static LeProofOfIdentity FirstProof(LegalEntity le)
         => le.Proofs.FirstOrDefault() ?? new LeProofOfIdentity();
 
-    private static LegalEntity ReadRecord20(DbDataReader r)
+    private static LegalEntity ReadRecord20(LegalEntityRecord20Entity r) => new()
     {
-        string? G(string c) => r[c] as string;
-        return new LegalEntity
-        {
-            Id = Convert.ToInt64(r["Id"]),
-            SearchKey = G("SearchKey") ?? "",
-            EntityName = G("EntityName") ?? "",
-            EntityConstitution = G("EntityConstitution") ?? "",
-            ListedCompany = G("ListedCompany"), RegisteredFirm = G("RegisteredFirm"), RegisteredTrust = G("RegisteredTrust"),
-            DateOfIncorporation = G("DateOfIncorporation"), DateOfCommencement = G("DateOfCommencement"),
-            PlaceOfIncorporation = G("PlaceOfIncorporation"), CountryOfIncorporation = G("CountryOfIncorporation"),
-            TinIssuingCountry = G("TinIssuingCountry"), Pan = G("Pan"), Form97 = G("Form97"),
-            TinGstNumber = G("TinGstNumber"), PanDocument = G("PanDocument"), PanVerified = G("PanVerified"),
-            TinGstnDocument = G("TinGstnDocument"),
-        };
-    }
-
-    private static void Add(DbCommand cmd, string name, object? value)
-        => cmd.Parameters.Add(NewParam(name, value));
+        Id = r.Id,
+        SearchKey = r.SearchKey ?? "",
+        EntityName = r.EntityName ?? "",
+        EntityConstitution = r.EntityConstitution ?? "",
+        ListedCompany = r.ListedCompany, RegisteredFirm = r.RegisteredFirm, RegisteredTrust = r.RegisteredTrust,
+        DateOfIncorporation = r.DateOfIncorporation, DateOfCommencement = r.DateOfCommencement,
+        PlaceOfIncorporation = r.PlaceOfIncorporation, CountryOfIncorporation = r.CountryOfIncorporation,
+        TinIssuingCountry = r.TinIssuingCountry, Pan = r.Pan, Form97 = r.Form97,
+        TinGstNumber = r.TinGstNumber, PanDocument = r.PanDocument, PanVerified = r.PanVerified,
+        TinGstnDocument = r.TinGstnDocument,
+    };
 }

@@ -78,7 +78,9 @@ public sealed class UpdateProcessCommand : ICommand
             .Where(c => masterByCustomer.ContainsKey(c))
             .Select(c => masterByCustomer[c].Id)
             .Distinct().ToList();
-        foreach (var document in await ctx.Documents.GetByMasterRecordIdsAsync(masterIdsToLoad, ct))
+        var documentStore = string.Equals(claim.ClientType, "L", StringComparison.OrdinalIgnoreCase)
+            ? ctx.LegalEntityDocuments : ctx.IndividualDocuments;
+        foreach (var document in await documentStore.GetByMasterRecordIdsAsync(masterIdsToLoad, ct))
         {
             if (!documentsByMaster.TryGetValue(document.MasterRecordId, out var bucket))
                 documentsByMaster[document.MasterRecordId] = bucket = [];
@@ -168,7 +170,7 @@ public sealed class UpdateProcessCommand : ICommand
     private static CustomerDocument? FindDocument(IEnumerable<CustomerDocument>? documents, string requestedName)
     {
         if (documents is null) return null;
-        var canonical = SqliteDocumentStore.Canonicalize(requestedName);
+        var canonical = SqlServerDocumentStoreBase.Canonicalize(requestedName);
         return documents.FirstOrDefault(d => string.Equals(d.OriginalFileName, requestedName, StringComparison.OrdinalIgnoreCase))
             ?? documents.FirstOrDefault(d => string.Equals(d.CanonicalFileName, canonical, StringComparison.OrdinalIgnoreCase));
     }

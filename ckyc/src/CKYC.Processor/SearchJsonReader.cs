@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using CKYC.Core.Domain;
+using CKYC.Core.Spec;
 
 namespace CKYC.Processor;
 
@@ -70,12 +71,7 @@ internal static class SearchJsonReader
     }
 
     private static void Validate(SearchRequest request, int row)
-    {
-        if (!string.Equals(request.ClientType, "I", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"Record {row}: ClientType must be I for individual search.");
-        if (request.SearchOption is < 1 or > 5)
-            throw new InvalidDataException($"Record {row}: SearchOption must be between 1 and 5.");
-    }
+        => SearchRequestValidator.ValidateAndNormalize(request, row);
 
     private static int GetInt(IReadOnlyDictionary<string, JsonElement> values, params string[] names)
         => int.TryParse(Get(values, names), out var result) ? result : 0;

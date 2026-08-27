@@ -8,23 +8,18 @@ running it end to end on your own machine. It is written for anyone who has the 
 
 ## 0. What database does it use?
 
-By default this pipeline uses **SQLite**:
+This pipeline uses **SQL Server** through EF Core 10:
 
 | Key            | Value                                                                  |
 |----------------|------------------------------------------------------------------------|
-| Provider       | `sqlite`                                                                |
-| DB file        | `runtime\ckyc.db` (created automatically on first run)                  |
-| Connection     | `Data Source=D:\centralprocessing\ckyc\runtime\ckyc.db;Cache=Shared`    |
-| Schema create  | `createSchemaOnStartup: true` (auto-creates tables on every start)      |
+| Provider       | `sqlserver`                                                               |
+| Dev database   | `(localdb)\MSSQLLocalDB / CkycCentral`                                  |
+| Connection     | configured under `database.connectionString`                            |
+| Schema         | apply `scripts\sqlserver\schema.sql` before the first application run  |
 
-Tables created automatically: `master_record`, `kyc_record_20/30/40/50/60/70`,
-`batch`, `fvu_run`, `master_record_response`, `master_record_attempt`, `activity_type`
-(seeded with the retryable activity master), `status_master` (seeded with the status
-master lookup), `master_record_reattempt`.
-
-> The pipeline can also run against **SQL Server**. Set `database.provider = "sqlserver"`,
-> supply a connection string, and run `scripts/sqlserver/schema.sql`. Everything else stays
-> the same. SQLite is the zero-dependency default and what the E2E run uses.
+For LocalDB development, create `CkycCentral` and apply the reviewed script with `sqlcmd`.
+For production, use a DBA/deployment identity for DDL and a least-privilege application
+identity for normal reads and writes.
 
 ---
 
@@ -36,7 +31,7 @@ master lookup), `master_record_reattempt`.
   ```
   The ASP.NET Core runtime needed by `CKYC.Crm` ships with the SDK, so no separate install.
 - **PowerShell** (the build/run scripts are `.ps1`).
-- *(Optional)* a **SQLite CLI** (`sqlite3`) to inspect the DB directly (used below).
+- **SQL Server LocalDB or SQL Server**, plus `sqlcmd` for provisioning the database.
 - *(Optional)* the real **FVU** tool for step 5 — `FVU_RUN_UTILITY.exe`, expected at
   `vendor\FVU_RUN_UTILITY.exe` (configured via `fvu.exePath`). Without it you can still run
   the whole pipeline using the built-in simulator (see §8).
@@ -48,12 +43,12 @@ master lookup), `master_record_reattempt`.
 | Folder / Project          | Responsibility                                                            |
 |---------------------------|---------------------------------------------------------------------------|
 | `src\CKYC.Core`           | Domain models, settings, CKYC format spec, interfaces/contracts           |
-| `src\CKYC.Data`           | SQLite persistence, schema bootstrap, repositories, batch/FVU journal     |
+| `src\CKYC.Data`           | EF Core / SQL Server persistence, repositories, batch/FVU journal         |
 | `src\CKYC.Crm`            | Dummy CRM data, HTTP client, self-hosted Kestrel API (`crm serve`)        |
 | `src\CKYC.Files`          | Writes the pipe-delimited `.UPL` + zip (`build-zip`) and file hashing     |
 | `src\CKYC.Fvu`            | Real `FVU_RUN_UTILITY.exe` invocation + deterministic simulation fallback |
 | `src\CKYC.Processor`      | The CLI executable (composition root, command registry, settings binding) |
-| `scripts\sqlserver\`      | SQL Server schema (optional)                                              |
+| `scripts\sqlserver\`      | Authoritative SQL Server schema                                           |
 | `samples\`                | Example inputs (`customer.json`)                                          |
 | `runtime\`                | Generated output, DB file, batch/FVU run artifacts                        |
 
@@ -85,12 +80,10 @@ src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe
 
 ### NuGet restore (important for a fresh machine)
 
-The repo ships a `nuget.config` that points NuGet at a **local cache**
-(`C:\Users\offic\.nuget\packages`) so restore works offline on the original machine. On
-*your* box that path almost certainly won't exist. The only external packages are:
+The external data packages are centrally versioned in `Directory.Packages.props`:
 
-- `Microsoft.Data.Sqlite.Core` (10.0.11)
-- `SQLitePCLRaw.bundle_e_sqlite3` (2.1.12)
+- `Microsoft.EntityFrameworkCore.SqlServer` (10.0.10)
+- `Microsoft.EntityFrameworkCore.Design` (10.0.10, development-only asset)
 
 Two options:
 
@@ -115,8 +108,8 @@ return value is always a list — CA1859).
 
 | Section        | Key                              | Meaning                                                                 |
 |----------------|----------------------------------|-------------------------------------------------------------------------|
-| `database`     | `provider` / `connectionString`  | `sqlite` (default) or `sqlserver`; the connection string               |
-|                | `createSchemaOnStartup`          | auto-create the schema on every start                                   |
+| `database`     | `provider` / `connectionString`  | `sqlserver`; the SQL Server connection string                           |
+|                | `createSchemaOnStartup`          | compatibility setting; startup validates, deployment owns DDL           |
 | `source`       | `mode`                           | `generate` (make N ids deterministically) or `file` (read a file)      |
 |                | `generateCount` / `generateSeed` | how many ids to generate and the seed                                  |
 |                | `filePath`                       | the file used when `mode=file`                                         |
@@ -239,7 +232,7 @@ After inserting the record, import every referenced document from a staging dire
 ```
 
 The command accepts safe PDF/JPG/JPEG basenames, validates their signatures and size limits,
-and stores their bytes in SQLite. `build-zip` recreates `support_docs` from the database;
+and stores their bytes in SQL Server. `build-zip` recreates `support_docs` from the database;
 manually placing source documents in the batch output directory is no longer required.
 
 ---
@@ -315,8 +308,8 @@ backoff of 24 hours doubling per failure, max 3 attempts).
 shows master-table counts by status and the last batch. To inspect the DB directly:
 
 ```powershell
-sqlite3 runtime\ckyc.db "SELECT Id,CustomerId,Status,BatchFile,Remarks FROM master_record;"
-sqlite3 runtime\ckyc.db "SELECT BatchKey,ExitCode,Passed,HashValue FROM fvu_run ORDER BY Id DESC LIMIT 1;"
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral -Q "SELECT Id,CustomerId,Status,BatchFile,Remarks FROM master_record;"
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral -Q "SELECT TOP (1) BatchKey,ExitCode,Passed,HashValue FROM fvu_run ORDER BY Id DESC;"
 ```
 
 Generated + processed artifacts live under:

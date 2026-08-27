@@ -405,13 +405,15 @@ public sealed class CkycRecordValidator
                     $"{section} Pin Code is mandatory when Country is India (IN)."));
         }
 
-        // Address supported with document / address match with OVD are mandatory.
-        if (supportRequired && string.IsNullOrWhiteSpace(a.AddressSupportedWithDocument))
-            errors.Add(Error(recordType, null, $"{section} address supported with document", a.AddressSupportedWithDocument,
-                $"{section} address supported with document is mandatory."));
-        if (addressMatchRequired && string.IsNullOrWhiteSpace(a.AddressMatchWithOvd))
-            errors.Add(Error(recordType, null, $"{section} Address match with OVD", a.AddressMatchWithOvd,
-                $"{section} Address match with OVD is mandatory."));
+        // These are adjacent but intentionally use different vocabularies in the workbook:
+        // support is Y/N, while OVD address matching is a Char(13) match classification.
+        if (supportRequired)
+            RequireAllowed(errors, recordType, $"{section} address supported with document",
+                a.AddressSupportedWithDocument, ["Y", "N"]);
+
+        if (addressMatchRequired)
+            RequireAllowed(errors, recordType, $"{section} Address match with OVD",
+                a.AddressMatchWithOvd, ["Exact Match", "No Match", "Partial Match"]);
     }
 
     private static void ValidateCurrentAddressProof(AddressDetails a, List<ValidationError> errors)
@@ -454,6 +456,8 @@ public sealed class CkycRecordValidator
                     "At least one of certified copy, DigiLocker verification, or equivalent e-document must be Y."));
             Require(errors, Record40, "Address exactly match with Deemed PoA / OVD", a.AddressExactlyMatch,
                 "Address exactly match with Deemed PoA / OVD is mandatory for an OVD other than H.");
+            OptionalAllowed(errors, Record40, "Address exactly match with Deemed PoA / OVD", a.AddressExactlyMatch,
+                ["Exact Match", "No Match", "Partial Match"]);
             Require(errors, Record40, "Copy of OVD", a.CopyOfOvd,
                 "Copy of OVD is mandatory when the current address differs and its proof is an OVD other than H.");
         }
@@ -466,6 +470,8 @@ public sealed class CkycRecordValidator
             RequireAllowed(errors, Record40, "Deemed PoA Verified", a.DeemedPoaVerified, ["Y", "N"]);
             Require(errors, Record40, "Address exactly match with Deemed PoA / OVD", a.AddressExactlyMatch,
                 "Address exactly match with Deemed PoA / OVD is mandatory for Deemed PoA.");
+            OptionalAllowed(errors, Record40, "Address exactly match with Deemed PoA / OVD", a.AddressExactlyMatch,
+                ["Exact Match", "No Match", "Partial Match"]);
         }
 
     }

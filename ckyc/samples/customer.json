@@ -45,7 +45,7 @@
     "city": "Bhayandar",
     "pinCode": "401106",
     "addressSupportedWithDocument": "N",
-    "addressMatchWithOvd": "N"
+    "addressMatchWithOvd": "No Match"
   },
   "currentAddressSameAsPermanent": "N",
   "currentAddress": {
@@ -58,7 +58,7 @@
     "city": "BHayandar",
     "pinCode": "401107",
     "addressSupportedWithDocument": "N",
-    "addressMatchWithOvd": "N",
+    "addressMatchWithOvd": "No Match",
     "proofOfAddress": "1",
     "proofOfAddressType": "E",
     "lengthOfAadhaar": "A",

@@ -1,8 +1,8 @@
 {
   "database": {
-    "provider": "sqlite",
-    "connectionString": "Data Source=D:\\centralprocessing\\ckyc\\runtime\\ckyc.db;Cache=Shared",
-    "createSchemaOnStartup": true
+    "provider": "sqlserver",
+    "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=CkycCentral;Trusted_Connection=True;TrustServerCertificate=True",
+    "createSchemaOnStartup": false
   },
   "source": {
     "mode": "generate",

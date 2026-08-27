@@ -124,7 +124,7 @@ public sealed class AddressDetails
     public string? PinCodeOthers { get; set; }
     public string? Digipin { get; set; }
     public string AddressSupportedWithDocument { get; set; } = "Y";
-    public string AddressMatchWithOvd { get; set; } = "Y";
+    public string AddressMatchWithOvd { get; set; } = "Exact Match";
 
     // ---- Record 40 : current-address proof-of-address block (CM, when address differs) ----
     public string? ProofOfAddress { get; set; }            // 1 OVD, 2 Deemed POA, 3 Declared Address

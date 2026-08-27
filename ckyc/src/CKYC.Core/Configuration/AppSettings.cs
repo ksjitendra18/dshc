@@ -53,10 +53,11 @@ public sealed class SearchSettings
 /// <summary>Persistence settings. The "provider" switch lets a SQL Server deployment be used in production.</summary>
 public sealed class DatabaseSettings
 {
-    // Provider: "sqlite" (default, zero-dependency) or "sqlserver" (production).
-    public string Provider { get; set; } = "sqlite";
-    public string ConnectionString { get; set; } = "Data Source=ckyc.db;Cache=Shared";
-    public bool CreateSchemaOnStartup { get; set; } = true;
+    // SQL Server is the only supported provider after the database migration.
+    public string Provider { get; set; } = "sqlserver";
+    public string ConnectionString { get; set; } = "Server=(localdb)\\MSSQLLocalDB;Database=CkycCentral;Trusted_Connection=True;TrustServerCertificate=True";
+    // Retained for configuration compatibility. DDL is deployment-owned; startup validates it.
+    public bool CreateSchemaOnStartup { get; set; }
     public int CommandTimeoutSeconds { get; set; } = 30;
 }
 

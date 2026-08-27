@@ -263,11 +263,11 @@ public sealed class CkycUploadWriter
             f[9] = perm.City; f[10] = perm.PinCode; f[11] = perm.PinCodeOthers;
             f[12] = perm.Digipin;
             f[13] = Coalesce(perm.AddressSupportedWithDocument, "Y");
-            f[14] = Coalesce(perm.AddressMatchWithOvd, "Y");
+            f[14] = Coalesce(perm.AddressMatchWithOvd, "Exact Match");
         }
         else
         {
-            f[6] = "IN"; f[13] = "Y"; f[14] = "Y";
+            f[6] = "IN"; f[13] = "Y"; f[14] = "Exact Match";
         }
 
         // "Same as permanent address" is an explicit M field in the create format. Do not infer

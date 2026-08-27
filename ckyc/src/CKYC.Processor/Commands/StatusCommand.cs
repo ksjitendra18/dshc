@@ -18,7 +18,7 @@ public sealed class StatusCommand : ICommand
         {
             var count = await ctx.Master.CountByStatusAsync(status, ct);
             if (count > 0 || status <= MasterRecordStatus.FvuPassed)
-                Log.Info("  {Status,-28} : {Count}", status.Label(), count);
+                Log.Info("  [{Code}] {Label,-28} : {Count}", MasterRecordStatusCode.For(status), status.Label(), count);
         }
 
         var last = await ctx.Journal.GetLastBatchAsync(ct);

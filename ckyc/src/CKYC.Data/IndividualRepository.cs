@@ -1,12 +1,17 @@
-using System.Data;
-using System.Data.Common;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
-using static CKYC.Data.MasterRepository;
+using Microsoft.EntityFrameworkCore;
+using IndividualRecord20Entity = CKYC.Data.Entities.IndividualRecord20;
+using IndividualRecord30Entity = CKYC.Data.Entities.IndividualRecord30;
+using IndividualRecord40Entity = CKYC.Data.Entities.IndividualRecord40;
+using IndividualRecord50Entity = CKYC.Data.Entities.IndividualRecord50;
+using IndividualRecord60Entity = CKYC.Data.Entities.IndividualRecord60;
+using IndividualRecord70Entity = CKYC.Data.Entities.IndividualRecord70;
 
 namespace CKYC.Data;
 
+/// <summary>EF Core (SQL Server) persistence for the individual record tables (20–70).</summary>
 public sealed class IndividualRepository : IIndividualRepository
 {
     private readonly ICkycDatabase _db;
@@ -18,22 +23,22 @@ public sealed class IndividualRepository : IIndividualRepository
         if (record.MasterRecordId <= 0)
             return new SaveRecordResult(record.MasterRecordId, false, "MasterRecordId is required", null);
 
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
-
         try
         {
-            await DeleteExistingAsync(conn, localTx, record.MasterRecordId, ct);
+            await using var db = _db.CreateContext();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-            var now = DateTime.UtcNow.ToString("o");
-            await InsertRecord20(conn, localTx, record, now, ct);
-            foreach (var proof in record.Proofs) await InsertRecord30(conn, localTx, record.MasterRecordId, record.CustomerId, proof, ct);
-            await InsertRecord40(conn, localTx, record, ct);
-            await InsertRecord50(conn, localTx, record, ct);
-            foreach (var rp in record.RelatedParties) await InsertRecord60(conn, localTx, record.MasterRecordId, record.CustomerId, rp, ct);
-            await InsertRecord70(conn, localTx, record, ct);
+            await DeleteExistingAsync(db, record.MasterRecordId, ct);
 
+            var now = DateTime.UtcNow;
+            InsertRecord20(db, record, now);
+            foreach (var proof in record.Proofs) InsertRecord30(db, record.MasterRecordId, record.CustomerId, proof, now);
+            InsertRecord40(db, record);
+            InsertRecord50(db, record);
+            foreach (var rp in record.RelatedParties) InsertRecord60(db, record.MasterRecordId, record.CustomerId, rp);
+            InsertRecord70(db, record);
+
+            await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             return new SaveRecordResult(record.MasterRecordId, true, null,
                 $"Saved demographics + {record.Proofs.Count} proof(s), addresses, contact, " +
@@ -41,400 +46,312 @@ public sealed class IndividualRepository : IIndividualRepository
         }
         catch (Exception ex)
         {
-            await tx.RollbackAsync(ct);
-            return new SaveRecordResult(record.MasterRecordId, false, ex.Message, null);
+            var message = ex is DbUpdateException && ex.InnerException is { } inner ? inner.Message : ex.Message;
+            return new SaveRecordResult(record.MasterRecordId, false, message, null);
         }
     }
 
     public async Task<IReadOnlyList<Individual>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
     {
         if (customerIds.Count == 0) return Array.Empty<Individual>();
-        var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
+        await using var db = _db.CreateContext();
 
-        await using var conn = _db.Create();
-        var result = new List<Individual>();
-        var masterIdByCustomer = new Dictionary<string, long>();
-        await using (var cmd = conn.CreateCommand())
-        {
-            var i = 0;
-            foreach (var id in customerIds) cmd.Parameters.Add(NewParam($"@v{i++}", id));
-            cmd.CommandText = $"SELECT * FROM kyc_record_20 WHERE CustomerId IN ({placeholders})";
-            await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct))
-            {
-                var ind = ReadRecord20(r);
-                ind.MasterRecordId = Convert.ToInt64(r["MasterRecordId"]);
-                ind.CustomerId = r["CustomerId"] as string ?? string.Empty;
-                ind.Proofs = new List<ProofOfIdentity>();
-                ind.RelatedParties = new List<RelatedParty>();
-                result.Add(ind);
-                masterIdByCustomer[ind.CustomerId] = ind.MasterRecordId;
-            }
-        }
+        var r20s = await db.IndividualRecord20s.AsNoTracking()
+            .Where(r => customerIds.Contains(r.CustomerId!))
+            .ToListAsync(ct);
+        if (r20s.Count == 0) return Array.Empty<Individual>();
 
-        foreach (var ind in result)
+        var masterIds = r20s.Select(r => r.MasterRecordId ?? 0).Where(id => id > 0).ToList();
+
+        var r30s = await db.IndividualRecord30s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r40s = await db.IndividualRecord40s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r50s = await db.IndividualRecord50s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r60s = await db.IndividualRecord60s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+        var r70s = await db.IndividualRecord70s.AsNoTracking()
+            .Where(r => masterIds.Contains(r.MasterRecordId ?? 0)).ToListAsync(ct);
+
+        // Build the relationships once. Re-filtering every child list for every customer is
+        // quadratic at the 500-record individual batch limit.
+        var r30ByMaster = r30s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r40ByMaster = r40s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r50ByMaster = r50s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r60ByMaster = r60s.ToLookup(r => r.MasterRecordId ?? 0);
+        var r70ByMaster = r70s.ToLookup(r => r.MasterRecordId ?? 0);
+
+        var result = new List<Individual>(r20s.Count);
+        foreach (var r20 in r20s)
         {
-            ind.Proofs = await LoadRecord30Async(conn, ind.MasterRecordId, ct);
-            ind.PermanentAddress = await LoadPermanentAddressAsync(conn, ind.MasterRecordId, ct);
-            var currentAddress = await LoadCurrentAddressAsync(conn, ind.MasterRecordId, ct);
-            ind.CurrentAddressSameAsPermanent = currentAddress.SameAsPermanent;
-            ind.CurrentAddress = currentAddress.Address;
-            ind.Contact = await LoadRecord50Async(conn, ind.MasterRecordId, ct);
-            ind.RelatedParties = await LoadRecord60Async(conn, ind.MasterRecordId, ct);
-            ind.Other = await LoadRecord70Async(conn, ind.MasterRecordId, ct);
+            var masterId = r20.MasterRecordId ?? 0;
+            var ind = ReadRecord20(r20);
+            ind.MasterRecordId = masterId;
+            ind.CustomerId = r20.CustomerId ?? string.Empty;
+            ind.Proofs = r30ByMaster[masterId].Select(ReadRecord30).ToList();
+            ind.RelatedParties = r60ByMaster[masterId].Select(ReadRecord60).ToList();
+
+            var r40 = r40ByMaster[masterId].FirstOrDefault();
+            ind.PermanentAddress = r40 is null ? null : ReadAddress(r40, "Perm");
+            var currentAddress = r40 is null ? null : ReadAddress(r40, "Curr");
+            ind.CurrentAddressSameAsPermanent = r40?.CurrSameAsPermanent;
+            ind.CurrentAddress = currentAddress;
+            ind.Contact = r50ByMaster[masterId].Select(ReadRecord50).FirstOrDefault();
+            ind.Other = r70ByMaster[masterId].Select(ReadRecord70).FirstOrDefault();
+            result.Add(ind);
         }
         return result;
     }
 
-    private static async Task<List<ProofOfIdentity>> LoadRecord30Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static Individual ReadRecord20(IndividualRecord20Entity r) => new()
     {
-        var list = new List<ProofOfIdentity>();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_30 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        Id = r.Id,
+        SearchKey = r.SearchKey ?? "",
+        KycType = r.KycType ?? "",
+        Name = new PersonName { Title = r.NameTitle ?? "", FirstName = r.NameFirst ?? "", MiddleName = r.NameMiddle ?? "", LastName = r.NameLast ?? "" },
+        MaidenName = new PersonName { Title = r.MaidenTitle ?? "", FirstName = r.MaidenFirst ?? "", MiddleName = r.MaidenMiddle ?? "", LastName = r.MaidenLast ?? "" },
+        MotherName = new PersonName { Title = r.MotherTitle ?? "", FirstName = r.MotherFirst ?? "", MiddleName = r.MotherMiddle ?? "", LastName = r.MotherLast ?? "" },
+        FatherName = new PersonName { Title = r.FatherTitle ?? "", FirstName = r.FatherFirst ?? "", MiddleName = r.FatherMiddle ?? "", LastName = r.FatherLast ?? "" },
+        SpouseName = new PersonName { Title = r.SpouseTitle ?? "", FirstName = r.SpouseFirst ?? "", MiddleName = r.SpouseMiddle ?? "", LastName = r.SpouseLast ?? "" },
+        DateOfBirth = r.DateOfBirth,
+        Gender = r.Gender,
+        ResidentialStatus = r.ResidentialStatus,
+        ResidentialStatusSupportedByDocument = r.ResidentialSupportedByDocument,
+        Nationality = r.Nationality,
+        NationalitySupportedByDocument = r.NationalitySupportedByDocument,
+        DifferentlyAbledStatus = r.DifferentlyAbledStatus,
+        DifferentlyAbledType = r.DifferentlyAbledType,
+        Pan = r.Pan,
+        PanVerified = r.PanVerified,
+        PhotoOfIndividual = r.PhotoOfIndividual,
+        Minor = r.Minor,
+        DateOfBirthMatchWithOvd = r.DoBmatchWithOvd,
+        NameMatchWithOvd = r.NameMatchWithOvd,
+        PhotoProvidedMatchWithOvd = r.PhotoMatchWithOvd,
+        GenderProvidedInOvd = r.GenderProvidedInOvd,
+        GenderMatchWithOvd = r.GenderMatchWithOvd,
+        Form97Provided = r.Form97Provided,
+        Form61Provided = r.Form61Provided,
+        PanDocument = r.PanDocument,
+        OtherTypeOfImpairment = r.OtherTypeOfImpairment,
+        DisabilityReferenceNumber = r.DisabilityReferenceNumber,
+        PermanentDisability = r.PermanentDisability,
+        DisabilityDate = r.DisabilityDate,
+        PercentageOfImpairment = r.PercentageOfImpairment,
+        DifferentlyAbledSupportedByDocument = r.DifferentlyAbledSupportedByDocument,
+    };
+
+    private static ProofOfIdentity ReadRecord30(IndividualRecord30Entity r) => new()
+    {
+        OvdType = r.OvdType ?? "", ModeOfAadhaarVerification = r.ModeOfAadhaarVerification ?? "",
+        PassportExpiryDate = r.PassportExpiryDate, DrivingLicenseExpiryDate = r.DrivingLicenseExpiryDate,
+        LengthOfAadhaar = r.LengthOfAadhaar, IdNumber = r.IdNumber,
+        CertifiedCopyWithOriginal = r.CertifiedCopyWithOriginal, EquivalentEDoc = r.EquivalentEdoc,
+        VerifiedFromDigiLocker = r.VerifiedFromDigiLocker, PresenceInMeaRepository = r.PresenceInMeaRepository,
+        PresenceInEciRepository = r.PresenceInEciRepository, PresenceInRtoRepository = r.PresenceInRtoRepository,
+        PresenceInNregaRepository = r.PresenceInNregaRepository, PresenceInNprRecords = r.PresenceInNprRecords,
+        DataFromOfflineVerification = r.DataFromOfflineVerification, ModeOfAuthentication = r.ModeOfAuthentication,
+        EkycDataFromUidai = r.EkycDataFromUidai, CopyOfOvd = r.CopyOfOvd,
+    };
+
+    private static AddressDetails ReadAddress(IndividualRecord40Entity r, string pfx)
+    {
+        string? G(string c) => c switch
         {
-            string? G(string c) => r[c] as string;
-            list.Add(new ProofOfIdentity
-            {
-                OvdType = G("OvdType") ?? "", ModeOfAadhaarVerification = G("ModeOfAadhaarVerification") ?? "",
-                PassportExpiryDate = G("PassportExpiryDate"), DrivingLicenseExpiryDate = G("DrivingLicenseExpiryDate"),
-                LengthOfAadhaar = G("LengthOfAadhaar"), IdNumber = G("IdNumber"),
-                CertifiedCopyWithOriginal = G("CertifiedCopyWithOriginal"), EquivalentEDoc = G("EquivalentEDoc"),
-                VerifiedFromDigiLocker = G("VerifiedFromDigiLocker"), PresenceInMeaRepository = G("PresenceInMeaRepository"),
-                PresenceInEciRepository = G("PresenceInEciRepository"), PresenceInRtoRepository = G("PresenceInRtoRepository"),
-                PresenceInNregaRepository = G("PresenceInNregaRepository"), PresenceInNprRecords = G("PresenceInNprRecords"),
-                DataFromOfflineVerification = G("DataFromOfflineVerification"), ModeOfAuthentication = G("ModeOfAuthentication"),
-                EkycDataFromUidai = G("EkycDataFromUidai"), CopyOfOvd = G("CopyOfOvd"),
-            });
-        }
-        return list;
-    }
-
-    private static async Task<AddressDetails?> LoadPermanentAddressAsync(DbConnection conn, long masterId, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_40 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? ReadAddress(r, "Perm") : null;
-    }
-
-    private static async Task<(string? SameAsPermanent, AddressDetails? Address)> LoadCurrentAddressAsync(
-        DbConnection conn,
-        long masterId,
-        CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_40 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return (null, null);
-        return (r["CurrSameAsPermanent"] as string, ReadAddress(r, "Curr"));
-    }
-
-    private static AddressDetails ReadAddress(DbDataReader r, string pfx)
-    {
-        string? G(string c) => r[c] as string;
+            "PermLine1" => r.PermLine1, "PermLine2" => r.PermLine2, "PermLine3" => r.PermLine3,
+            "PermCountry" => r.PermCountry, "PermState" => r.PermState, "PermDistrict" => r.PermDistrict,
+            "PermCity" => r.PermCity, "PermPinCode" => r.PermPinCode, "PermPinOthers" => r.PermPinOthers,
+            "PermDigipin" => r.PermDigipin, "PermSupportedDocument" => r.PermSupportedDocument,
+            "PermMatchOvd" => r.PermMatchOvd,
+            "CurrLine1" => r.CurrLine1, "CurrLine2" => r.CurrLine2, "CurrLine3" => r.CurrLine3,
+            "CurrCountry" => r.CurrCountry, "CurrState" => r.CurrState, "CurrDistrict" => r.CurrDistrict,
+            "CurrCity" => r.CurrCity, "CurrPinCode" => r.CurrPinCode, "CurrPinOthers" => r.CurrPinOthers,
+            "CurrDigipin" => r.CurrDigipin, "CurrSupportedDocument" => r.CurrSupportedDocument,
+            "CurrMatchOvd" => r.CurrMatchOvd,
+            _ => null,
+        };
         var address = new AddressDetails
         {
             Line1 = G($"{pfx}Line1") ?? "", Line2 = G($"{pfx}Line2") ?? "", Line3 = G($"{pfx}Line3") ?? "",
             Country = G($"{pfx}Country") ?? "", State = G($"{pfx}State") ?? "", District = G($"{pfx}District") ?? "",
             City = G($"{pfx}City") ?? "", PinCode = G($"{pfx}PinCode") ?? "", PinCodeOthers = G($"{pfx}PinOthers"),
             Digipin = G($"{pfx}Digipin"), AddressSupportedWithDocument = G($"{pfx}SupportedDocument") ?? "Y",
-            AddressMatchWithOvd = G($"{pfx}MatchOvd") ?? "Y",
+            AddressMatchWithOvd = G($"{pfx}MatchOvd") ?? "Exact Match",
         };
         if (pfx == "Curr")
         {
-            address.ProofOfAddress = G("CurrProofOfAddress");
-            address.ProofOfAddressType = G("CurrProofOfAddressType");
-            address.LengthOfAadhaar = G("CurrLengthOfAadhaar");
-            address.IdNumber = G("CurrIdNumber");
-            address.ModeOfAadhaarVerification = G("CurrAadhaarVerification");
-            address.OvdExpiryDate = G("CurrOvdExpiryDate");
-            address.DeemedPoa = G("CurrDeemedPoa");
-            address.DeemedPoaVerified = G("CurrDeemedPoaVerified");
-            address.CertifiedCopyWithOriginal = G("CurrCertifiedCopy");
-            address.EquivalentEDoc = G("CurrEquivalentEDoc");
-            address.VerifiedFromDigiLocker = G("CurrDigiLockerVerified");
-            address.RemoteGeoTagging = G("CurrRemoteGeoTagging");
-            address.AddressExactlyMatch = G("CurrAddressExactlyMatch");
-            address.PositiveVerification = G("CurrPositiveVerification");
-            address.PhysicalVerificationByThirdParty = G("CurrPhysicalThirdParty");
-            address.PhysicalVerificationByReOfficial = G("CurrPhysicalReOfficial");
-            address.PresenceInRepository = G("CurrPresenceInRepository");
-            address.ForeignGovernmentDocument = G("CurrForeignGovDocument");
-            address.CopyOfOvd = G("CurrCopyOfOvd");
+            address.ProofOfAddress = r.CurrProofOfAddress;
+            address.ProofOfAddressType = r.CurrProofOfAddressType;
+            address.LengthOfAadhaar = r.CurrLengthOfAadhaar;
+            address.IdNumber = r.CurrIdNumber;
+            address.ModeOfAadhaarVerification = r.CurrAadhaarVerification;
+            address.OvdExpiryDate = r.CurrOvdExpiryDate;
+            address.DeemedPoa = r.CurrDeemedPoa;
+            address.DeemedPoaVerified = r.CurrDeemedPoaVerified;
+            address.CertifiedCopyWithOriginal = r.CurrCertifiedCopy;
+            address.EquivalentEDoc = r.CurrEquivalentEdoc;
+            address.VerifiedFromDigiLocker = r.CurrDigiLockerVerified;
+            address.RemoteGeoTagging = r.CurrRemoteGeoTagging;
+            address.AddressExactlyMatch = r.CurrAddressExactlyMatch;
+            address.PositiveVerification = r.CurrPositiveVerification;
+            address.PhysicalVerificationByThirdParty = r.CurrPhysicalThirdParty;
+            address.PhysicalVerificationByReOfficial = r.CurrPhysicalReOfficial;
+            address.PresenceInRepository = r.CurrPresenceInRepository;
+            address.ForeignGovernmentDocument = r.CurrForeignGovDocument;
+            address.CopyOfOvd = r.CurrCopyOfOvd;
         }
         return address;
     }
 
-    private static async Task<ContactDetails?> LoadRecord50Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static ContactDetails ReadRecord50(IndividualRecord50Entity r) => new()
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_50 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
-        return new ContactDetails
+        Email = r.EmailAddress ?? "",
+        CountryCode = r.CountryCode ?? "+91",
+        MobileNumber = r.MobileNumber ?? "",
+        MobileValidatedViaOtp = r.MobileValidatedViaOtp,
+        EmailValidatedViaOtp = r.EmailValidatedViaOtp,
+        MobileValidatedViaThirdParty = r.MobileValidatedViaThirdParty,
+    };
+
+    private static RelatedParty ReadRecord60(IndividualRecord60Entity r) => new()
+    {
+        RelatedPersonType = r.RelatedPersonType ?? "",
+        CkycNumberOfRelatedPerson = r.CkycNumberOfRelatedPerson ?? "",
+    };
+
+    private static OtherDetails ReadRecord70(IndividualRecord70Entity r) => new()
+    {
+        Remarks = r.Remarks ?? "", VideoKycWithoutOfficial = r.VideoKycWithoutOfficial ?? "N",
+        VideoKycWithReOfficial = r.VideoKycWithReOfficial ?? "N", FaceToFaceWithReOfficial = r.FaceToFaceWithReOfficial ?? "N",
+        NonFaceToFace = r.NonFaceToFace ?? "N", FaceToFaceWithNonOfficial = r.FaceToFaceWithNonOfficial ?? "N",
+        AttestationDate = r.AttestationDate ?? "", EmployeeName = r.EmployeeName ?? "",
+        EmployeeCode = r.EmployeeCode ?? "", EmployeeDesignation = r.EmployeeDesignation ?? "",
+        EmployeeBranch = r.EmployeeBranch ?? "", EmployeeCkycId = r.EmployeeCkycId ?? "",
+        InstitutionName = r.InstitutionName ?? "", InstitutionCode = r.InstitutionCode ?? "",
+        DeclarationDocument = r.DeclarationDocument ?? "", DeclarationFlag = r.DeclarationFlag ?? "Y",
+        ClientConsent = r.ClientConsent ?? "", Place = r.Place ?? "", DeclarationDate = r.DeclarationDate ?? "",
+    };
+
+    private static void InsertRecord20(CkycDbContext db, Individual r, DateTime now)
+    {
+        db.IndividualRecord20s.Add(new IndividualRecord20Entity
         {
-            Email = r["EmailAddress"] as string ?? "",
-            CountryCode = r["CountryCode"] as string ?? "+91",
-            MobileNumber = r["MobileNumber"] as string ?? "",
-            MobileValidatedViaOtp = r["MobileValidatedViaOtp"] as string,
-            EmailValidatedViaOtp = r["EmailValidatedViaOtp"] as string,
-            MobileValidatedViaThirdParty = r["MobileValidatedViaThirdParty"] as string,
-        };
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId,
+            SearchKey = r.SearchKey, KycType = r.KycType,
+            NameTitle = r.Name.Title, NameFirst = r.Name.FirstName, NameMiddle = r.Name.MiddleName, NameLast = r.Name.LastName,
+            MaidenTitle = r.MaidenName.Title, MaidenFirst = r.MaidenName.FirstName, MaidenMiddle = r.MaidenName.MiddleName, MaidenLast = r.MaidenName.LastName,
+            MotherTitle = r.MotherName.Title, MotherFirst = r.MotherName.FirstName, MotherMiddle = r.MotherName.MiddleName, MotherLast = r.MotherName.LastName,
+            FatherTitle = r.FatherName.Title, FatherFirst = r.FatherName.FirstName, FatherMiddle = r.FatherName.MiddleName, FatherLast = r.FatherName.LastName,
+            SpouseTitle = r.SpouseName.Title, SpouseFirst = r.SpouseName.FirstName, SpouseMiddle = r.SpouseName.MiddleName, SpouseLast = r.SpouseName.LastName,
+            DateOfBirth = r.DateOfBirth, Gender = r.Gender,
+            ResidentialStatus = r.ResidentialStatus, ResidentialSupportedByDocument = r.ResidentialStatusSupportedByDocument,
+            Nationality = r.Nationality, NationalitySupportedByDocument = r.NationalitySupportedByDocument,
+            DifferentlyAbledStatus = r.DifferentlyAbledStatus, DifferentlyAbledType = r.DifferentlyAbledType,
+            Pan = r.Pan, PanVerified = r.PanVerified, PhotoOfIndividual = r.PhotoOfIndividual,
+            Minor = r.Minor, DoBmatchWithOvd = r.DateOfBirthMatchWithOvd, NameMatchWithOvd = r.NameMatchWithOvd,
+            PhotoMatchWithOvd = r.PhotoProvidedMatchWithOvd, GenderProvidedInOvd = r.GenderProvidedInOvd, GenderMatchWithOvd = r.GenderMatchWithOvd,
+            Form97Provided = r.Form97Provided, Form61Provided = r.Form61Provided, PanDocument = r.PanDocument,
+            OtherTypeOfImpairment = r.OtherTypeOfImpairment, DisabilityReferenceNumber = r.DisabilityReferenceNumber,
+            PermanentDisability = r.PermanentDisability, DisabilityDate = r.DisabilityDate, PercentageOfImpairment = r.PercentageOfImpairment,
+            DifferentlyAbledSupportedByDocument = r.DifferentlyAbledSupportedByDocument,
+            CreatedAt = now, UpdatedAt = now,
+        });
     }
 
-    private static async Task<List<RelatedParty>> LoadRecord60Async(DbConnection conn, long masterId, CancellationToken ct)
+    private static void InsertRecord30(CkycDbContext db, long masterId, string customerId, ProofOfIdentity p, DateTime now)
     {
-        var list = new List<RelatedParty>();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_60 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            list.Add(new RelatedParty { RelatedPersonType = r["RelatedPersonType"] as string ?? "", CkycNumberOfRelatedPerson = r["CkycNumberOfRelatedPerson"] as string ?? "" });
-        return list;
-    }
-
-    private static async Task<OtherDetails?> LoadRecord70Async(DbConnection conn, long masterId, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM kyc_record_70 WHERE MasterRecordId=@m";
-        cmd.Parameters.Add(NewParam("@m", masterId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
-        string? G(string c) => r[c] as string;
-        return new OtherDetails
+        db.IndividualRecord30s.Add(new IndividualRecord30Entity
         {
-            Remarks = G("Remarks") ?? "", VideoKycWithoutOfficial = G("VideoKycWithoutOfficial") ?? "N",
-            VideoKycWithReOfficial = G("VideoKycWithReOfficial") ?? "N", FaceToFaceWithReOfficial = G("FaceToFaceWithReOfficial") ?? "N",
-            NonFaceToFace = G("NonFaceToFace") ?? "N", FaceToFaceWithNonOfficial = G("FaceToFaceWithNonOfficial") ?? "N",
-            AttestationDate = G("AttestationDate") ?? "", EmployeeName = G("EmployeeName") ?? "",
-            EmployeeCode = G("EmployeeCode") ?? "", EmployeeDesignation = G("EmployeeDesignation") ?? "",
-            EmployeeBranch = G("EmployeeBranch") ?? "", EmployeeCkycId = G("EmployeeCkycId") ?? "",
-            InstitutionName = G("InstitutionName") ?? "", InstitutionCode = G("InstitutionCode") ?? "",
-            DeclarationDocument = G("DeclarationDocument") ?? "", DeclarationFlag = G("DeclarationFlag") ?? "Y",
-            ClientConsent = G("ClientConsent") ?? "", Place = G("Place") ?? "", DeclarationDate = G("DeclarationDate") ?? "",
-        };
+            MasterRecordId = masterId, CustomerId = customerId, Record20LineNumber = 1,
+            OvdType = p.OvdType, ModeOfAadhaarVerification = p.ModeOfAadhaarVerification,
+            PassportExpiryDate = p.PassportExpiryDate, DrivingLicenseExpiryDate = p.DrivingLicenseExpiryDate,
+            LengthOfAadhaar = p.LengthOfAadhaar, IdNumber = p.IdNumber,
+            CertifiedCopyWithOriginal = p.CertifiedCopyWithOriginal, EquivalentEdoc = p.EquivalentEDoc,
+            VerifiedFromDigiLocker = p.VerifiedFromDigiLocker, PresenceInMeaRepository = p.PresenceInMeaRepository,
+            PresenceInEciRepository = p.PresenceInEciRepository, PresenceInRtoRepository = p.PresenceInRtoRepository,
+            PresenceInNregaRepository = p.PresenceInNregaRepository, PresenceInNprRecords = p.PresenceInNprRecords,
+            DataFromOfflineVerification = p.DataFromOfflineVerification, ModeOfAuthentication = p.ModeOfAuthentication,
+            EkycDataFromUidai = p.EkycDataFromUidai, CopyOfOvd = p.CopyOfOvd,
+        });
     }
 
-    // ---------- record 20 ----------
-    private static async Task InsertRecord20(DbConnection conn, DbTransaction tx, Individual r, string now, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_20
-                (MasterRecordId, CustomerId, SearchKey, KycType, NameTitle, NameFirst, NameMiddle, NameLast,
-                 MaidenTitle, MaidenFirst, MaidenMiddle, MaidenLast, MotherTitle, MotherFirst, MotherMiddle, MotherLast,
-                 FatherTitle, FatherFirst, FatherMiddle, FatherLast, SpouseTitle, SpouseFirst, SpouseMiddle, SpouseLast,
-                 DateOfBirth, Gender, ResidentialStatus, ResidentialSupportedByDocument, Nationality, NationalitySupportedByDocument,
-                 DifferentlyAbledStatus, DifferentlyAbledType, Pan, PanVerified, PhotoOfIndividual,
-                 Minor, DoBMatchWithOvd, NameMatchWithOvd, PhotoMatchWithOvd, GenderProvidedInOvd, GenderMatchWithOvd,
-                 Form97Provided, Form61Provided, PanDocument, OtherTypeOfImpairment, DisabilityReferenceNumber,
-                 PermanentDisability, DisabilityDate, PercentageOfImpairment, DifferentlyAbledSupportedByDocument,
-                 CreatedAt, UpdatedAt)
-            VALUES
-                (@m, @sid, @sk, @kyc, @nT, @nF, @nM, @nL, @mdT, @mdF, @mdM, @mdL, @moT, @moF, @moM, @moL,
-                 @faT, @faF, @faM, @faL, @spT, @spF, @spM, @spL, @dob, @gen, @rs, @rsd, @nat, @natd,
-                 @daS, @daT, @pan, @panV, @photo,
-                 @minor, @dobm, @namem, @photom, @genProv, @genMatch, @f97, @f61, @panDoc, @otherImp, @disRef,
-                 @permDis, @disDate, @pctImp, @daSup, @now, @now)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@sid", r.CustomerId);
-        Add(cmd, "@sk", r.SearchKey); Add(cmd, "@kyc", r.KycType);
-        Add(cmd, "@nT", r.Name.Title); Add(cmd, "@nF", r.Name.FirstName); Add(cmd, "@nM", r.Name.MiddleName); Add(cmd, "@nL", r.Name.LastName);
-        Add(cmd, "@mdT", r.MaidenName.Title); Add(cmd, "@mdF", r.MaidenName.FirstName); Add(cmd, "@mdM", r.MaidenName.MiddleName); Add(cmd, "@mdL", r.MaidenName.LastName);
-        Add(cmd, "@moT", r.MotherName.Title); Add(cmd, "@moF", r.MotherName.FirstName); Add(cmd, "@moM", r.MotherName.MiddleName); Add(cmd, "@moL", r.MotherName.LastName);
-        Add(cmd, "@faT", r.FatherName.Title); Add(cmd, "@faF", r.FatherName.FirstName); Add(cmd, "@faM", r.FatherName.MiddleName); Add(cmd, "@faL", r.FatherName.LastName);
-        Add(cmd, "@spT", r.SpouseName.Title); Add(cmd, "@spF", r.SpouseName.FirstName); Add(cmd, "@spM", r.SpouseName.MiddleName); Add(cmd, "@spL", r.SpouseName.LastName);
-        Add(cmd, "@dob", r.DateOfBirth); Add(cmd, "@gen", r.Gender);
-        Add(cmd, "@rs", r.ResidentialStatus); Add(cmd, "@rsd", r.ResidentialStatusSupportedByDocument);
-        Add(cmd, "@nat", r.Nationality); Add(cmd, "@natd", r.NationalitySupportedByDocument);
-        Add(cmd, "@daS", r.DifferentlyAbledStatus); Add(cmd, "@daT", r.DifferentlyAbledType);
-        Add(cmd, "@pan", r.Pan); Add(cmd, "@panV", r.PanVerified); Add(cmd, "@photo", r.PhotoOfIndividual);
-        Add(cmd, "@minor", r.Minor); Add(cmd, "@dobm", r.DateOfBirthMatchWithOvd); Add(cmd, "@namem", r.NameMatchWithOvd);
-        Add(cmd, "@photom", r.PhotoProvidedMatchWithOvd); Add(cmd, "@genProv", r.GenderProvidedInOvd); Add(cmd, "@genMatch", r.GenderMatchWithOvd);
-        Add(cmd, "@f97", r.Form97Provided); Add(cmd, "@f61", r.Form61Provided); Add(cmd, "@panDoc", r.PanDocument);
-        Add(cmd, "@otherImp", r.OtherTypeOfImpairment); Add(cmd, "@disRef", r.DisabilityReferenceNumber);
-        Add(cmd, "@permDis", r.PermanentDisability); Add(cmd, "@disDate", r.DisabilityDate); Add(cmd, "@pctImp", r.PercentageOfImpairment);
-        Add(cmd, "@daSup", r.DifferentlyAbledSupportedByDocument);
-        Add(cmd, "@now", now);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task InsertRecord30(DbConnection conn, DbTransaction tx, long masterId, string customerId, ProofOfIdentity p, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_30
-                (MasterRecordId, CustomerId, Record20LineNumber, OvdType, ModeOfAadhaarVerification, PassportExpiryDate,
-                 DrivingLicenseExpiryDate, LengthOfAadhaar, IdNumber, CertifiedCopyWithOriginal, EquivalentEDoc,
-                 VerifiedFromDigiLocker, PresenceInMeaRepository, PresenceInEciRepository, PresenceInRtoRepository,
-                 PresenceInNregaRepository, PresenceInNprRecords, DataFromOfflineVerification, ModeOfAuthentication,
-                 EkycDataFromUidai, CopyOfOvd)
-            VALUES
-                (@m, @customer, 1, @ovd, @mode, @pe, @dle, @len, @idn, @cert, @eq, @digi, @mea, @eci, @rto, @nrega, @npr, @off, @auth, @ekyc, @copy)
-            """;
-        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@ovd", p.OvdType); Add(cmd, "@mode", p.ModeOfAadhaarVerification);
-        Add(cmd, "@pe", p.PassportExpiryDate); Add(cmd, "@dle", p.DrivingLicenseExpiryDate); Add(cmd, "@len", p.LengthOfAadhaar);
-        Add(cmd, "@idn", p.IdNumber); Add(cmd, "@cert", p.CertifiedCopyWithOriginal); Add(cmd, "@eq", p.EquivalentEDoc);
-        Add(cmd, "@digi", p.VerifiedFromDigiLocker); Add(cmd, "@mea", p.PresenceInMeaRepository); Add(cmd, "@eci", p.PresenceInEciRepository);
-        Add(cmd, "@rto", p.PresenceInRtoRepository); Add(cmd, "@nrega", p.PresenceInNregaRepository); Add(cmd, "@npr", p.PresenceInNprRecords);
-        Add(cmd, "@off", p.DataFromOfflineVerification); Add(cmd, "@auth", p.ModeOfAuthentication); Add(cmd, "@ekyc", p.EkycDataFromUidai); Add(cmd, "@copy", p.CopyOfOvd);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task InsertRecord40(DbConnection conn, DbTransaction tx, Individual r, CancellationToken ct)
+    private static void InsertRecord40(CkycDbContext db, Individual r)
     {
         var perm = r.PermanentAddress;
         var curr = r.CurrentAddress;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_40
-                (MasterRecordId, CustomerId, Record20LineNumber, PermLine1, PermLine2, PermLine3, PermCountry, PermState, PermDistrict, PermCity, PermPinCode, PermPinOthers, PermDigipin, PermSupportedDocument, PermMatchOvd, CurrSameAsPermanent,
-                 CurrLine1, CurrLine2, CurrLine3, CurrCountry, CurrState, CurrDistrict, CurrCity, CurrPinCode, CurrPinOthers, CurrDigipin, CurrSupportedDocument, CurrMatchOvd,
-                 CurrProofOfAddress, CurrProofOfAddressType, CurrLengthOfAadhaar, CurrIdNumber, CurrAadhaarVerification,
-                 CurrOvdExpiryDate, CurrDeemedPoa, CurrDeemedPoaVerified, CurrCertifiedCopy, CurrEquivalentEDoc,
-                 CurrDigiLockerVerified, CurrRemoteGeoTagging, CurrAddressExactlyMatch, CurrPositiveVerification,
-                 CurrPhysicalThirdParty, CurrPhysicalReOfficial, CurrPresenceInRepository, CurrForeignGovDocument, CurrCopyOfOvd)
-            VALUES
-                (@m, @customer, 1, @p1,@p2,@p3,@pco,@pst,@pdi,@pci,@ppin,@ppinO,@pdig,@psup,@pmatch,@same,
-                 @c1,@c2,@c3,@cco,@cst,@cdi,@cci,@cpin,@cpinO,@cdig,@csup,@cmatch,
-                 @cproof,@cproofType,@clength,@cid,@caadhaar,@cexpiry,@cdeemed,@cdeemedVerified,@ccertified,@cequivalent,
-                 @cdigilocker,@cgeo,@cexact,@cpositive,@cphysicalThird,@cphysicalRe,@cpresence,@cforeign,@ccopy)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId);
-        Add(cmd, "@p1", perm?.Line1); Add(cmd, "@p2", perm?.Line2); Add(cmd, "@p3", perm?.Line3);
-        Add(cmd, "@pco", perm?.Country); Add(cmd, "@pst", perm?.State); Add(cmd, "@pdi", perm?.District);
-        Add(cmd, "@pci", perm?.City); Add(cmd, "@ppin", perm?.PinCode); Add(cmd, "@ppinO", perm?.PinCodeOthers);
-        Add(cmd, "@pdig", perm?.Digipin); Add(cmd, "@psup", perm?.AddressSupportedWithDocument); Add(cmd, "@pmatch", perm?.AddressMatchWithOvd);
-        Add(cmd, "@same", r.CurrentAddressSameAsPermanent);
-        Add(cmd, "@c1", curr?.Line1); Add(cmd, "@c2", curr?.Line2); Add(cmd, "@c3", curr?.Line3);
-        Add(cmd, "@cco", curr?.Country); Add(cmd, "@cst", curr?.State); Add(cmd, "@cdi", curr?.District);
-        Add(cmd, "@cci", curr?.City); Add(cmd, "@cpin", curr?.PinCode); Add(cmd, "@cpinO", curr?.PinCodeOthers);
-        Add(cmd, "@cdig", curr?.Digipin); Add(cmd, "@csup", curr?.AddressSupportedWithDocument); Add(cmd, "@cmatch", curr?.AddressMatchWithOvd);
-        Add(cmd, "@cproof", curr?.ProofOfAddress); Add(cmd, "@cproofType", curr?.ProofOfAddressType);
-        Add(cmd, "@clength", curr?.LengthOfAadhaar); Add(cmd, "@cid", curr?.IdNumber);
-        Add(cmd, "@caadhaar", curr?.ModeOfAadhaarVerification); Add(cmd, "@cexpiry", curr?.OvdExpiryDate);
-        Add(cmd, "@cdeemed", curr?.DeemedPoa); Add(cmd, "@cdeemedVerified", curr?.DeemedPoaVerified);
-        Add(cmd, "@ccertified", curr?.CertifiedCopyWithOriginal); Add(cmd, "@cequivalent", curr?.EquivalentEDoc);
-        Add(cmd, "@cdigilocker", curr?.VerifiedFromDigiLocker); Add(cmd, "@cgeo", curr?.RemoteGeoTagging);
-        Add(cmd, "@cexact", curr?.AddressExactlyMatch); Add(cmd, "@cpositive", curr?.PositiveVerification);
-        Add(cmd, "@cphysicalThird", curr?.PhysicalVerificationByThirdParty); Add(cmd, "@cphysicalRe", curr?.PhysicalVerificationByReOfficial);
-        Add(cmd, "@cpresence", curr?.PresenceInRepository); Add(cmd, "@cforeign", curr?.ForeignGovernmentDocument);
-        Add(cmd, "@ccopy", curr?.CopyOfOvd);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.IndividualRecord40s.Add(new IndividualRecord40Entity
+        {
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            PermLine1 = perm?.Line1, PermLine2 = perm?.Line2, PermLine3 = perm?.Line3,
+            PermCountry = perm?.Country, PermState = perm?.State, PermDistrict = perm?.District,
+            PermCity = perm?.City, PermPinCode = perm?.PinCode, PermPinOthers = perm?.PinCodeOthers,
+            PermDigipin = perm?.Digipin, PermSupportedDocument = perm?.AddressSupportedWithDocument, PermMatchOvd = perm?.AddressMatchWithOvd,
+            CurrSameAsPermanent = r.CurrentAddressSameAsPermanent,
+            CurrLine1 = curr?.Line1, CurrLine2 = curr?.Line2, CurrLine3 = curr?.Line3,
+            CurrCountry = curr?.Country, CurrState = curr?.State, CurrDistrict = curr?.District,
+            CurrCity = curr?.City, CurrPinCode = curr?.PinCode, CurrPinOthers = curr?.PinCodeOthers,
+            CurrDigipin = curr?.Digipin, CurrSupportedDocument = curr?.AddressSupportedWithDocument, CurrMatchOvd = curr?.AddressMatchWithOvd,
+            CurrProofOfAddress = curr?.ProofOfAddress, CurrProofOfAddressType = curr?.ProofOfAddressType,
+            CurrLengthOfAadhaar = curr?.LengthOfAadhaar, CurrIdNumber = curr?.IdNumber,
+            CurrAadhaarVerification = curr?.ModeOfAadhaarVerification, CurrOvdExpiryDate = curr?.OvdExpiryDate,
+            CurrDeemedPoa = curr?.DeemedPoa, CurrDeemedPoaVerified = curr?.DeemedPoaVerified,
+            CurrCertifiedCopy = curr?.CertifiedCopyWithOriginal, CurrEquivalentEdoc = curr?.EquivalentEDoc,
+            CurrDigiLockerVerified = curr?.VerifiedFromDigiLocker, CurrRemoteGeoTagging = curr?.RemoteGeoTagging,
+            CurrAddressExactlyMatch = curr?.AddressExactlyMatch, CurrPositiveVerification = curr?.PositiveVerification,
+            CurrPhysicalThirdParty = curr?.PhysicalVerificationByThirdParty, CurrPhysicalReOfficial = curr?.PhysicalVerificationByReOfficial,
+            CurrPresenceInRepository = curr?.PresenceInRepository, CurrForeignGovDocument = curr?.ForeignGovernmentDocument,
+            CurrCopyOfOvd = curr?.CopyOfOvd,
+        });
     }
 
-    private static async Task InsertRecord50(DbConnection conn, DbTransaction tx, Individual r, CancellationToken ct)
+    private static void InsertRecord50(CkycDbContext db, Individual r)
     {
         var c = r.Contact;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_50 (MasterRecordId, CustomerId, Record20LineNumber, EmailAddress, CountryCode, MobileNumber, MobileValidatedViaOtp, EmailValidatedViaOtp, MobileValidatedViaThirdParty)
-            VALUES (@m, @customer, 1, @email, @cc, @mob, @mOtp, @eOtp, @mTp)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@email", c?.Email); Add(cmd, "@cc", c?.CountryCode);
-        Add(cmd, "@mob", c?.MobileNumber); Add(cmd, "@mOtp", c?.MobileValidatedViaOtp); Add(cmd, "@eOtp", c?.EmailValidatedViaOtp); Add(cmd, "@mTp", c?.MobileValidatedViaThirdParty);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.IndividualRecord50s.Add(new IndividualRecord50Entity
+        {
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            EmailAddress = c?.Email, CountryCode = c?.CountryCode, MobileNumber = c?.MobileNumber,
+            MobileValidatedViaOtp = c?.MobileValidatedViaOtp, EmailValidatedViaOtp = c?.EmailValidatedViaOtp,
+            MobileValidatedViaThirdParty = c?.MobileValidatedViaThirdParty,
+        });
     }
 
-    private static async Task InsertRecord60(DbConnection conn, DbTransaction tx, long masterId, string customerId, RelatedParty rp, CancellationToken ct)
+    private static void InsertRecord60(CkycDbContext db, long masterId, string customerId, RelatedParty rp)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_60 (MasterRecordId, CustomerId, Record20LineNumber, RelatedPersonType, CkycNumberOfRelatedPerson)
-            VALUES (@m, @customer, 1, @type, @ckyc)
-            """;
-        Add(cmd, "@m", masterId); Add(cmd, "@customer", customerId); Add(cmd, "@type", rp.RelatedPersonType); Add(cmd, "@ckyc", rp.CkycNumberOfRelatedPerson);
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.IndividualRecord60s.Add(new IndividualRecord60Entity
+        {
+            MasterRecordId = masterId, CustomerId = customerId, Record20LineNumber = 1,
+            RelatedPersonType = rp.RelatedPersonType, CkycNumberOfRelatedPerson = rp.CkycNumberOfRelatedPerson,
+        });
     }
 
-    private static async Task InsertRecord70(DbConnection conn, DbTransaction tx, Individual r, CancellationToken ct)
+    private static void InsertRecord70(CkycDbContext db, Individual r)
     {
         var o = r.Other;
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO kyc_record_70 (MasterRecordId, CustomerId, Record20LineNumber, Remarks, VideoKycWithoutOfficial, VideoKycWithReOfficial,
-                FaceToFaceWithReOfficial, NonFaceToFace, FaceToFaceWithNonOfficial, AttestationDate, EmployeeName, EmployeeCode,
-                EmployeeDesignation, EmployeeBranch, EmployeeCkycId, InstitutionName, InstitutionCode, DeclarationDocument,
-                DeclarationFlag, ClientConsent, Place, DeclarationDate)
-            VALUES (@m, @customer, 1, @rem, @v1, @v2, @f1, @nf, @f2, @ad, @en, @ec, @ed, @eb, @eid, @in, @ic, @dd, @df, @cc, @pl, @dc)
-            """;
-        Add(cmd, "@m", r.MasterRecordId); Add(cmd, "@customer", r.CustomerId); Add(cmd, "@rem", o?.Remarks); Add(cmd, "@v1", o?.VideoKycWithoutOfficial);
-        Add(cmd, "@v2", o?.VideoKycWithReOfficial); Add(cmd, "@f1", o?.FaceToFaceWithReOfficial); Add(cmd, "@nf", o?.NonFaceToFace);
-        Add(cmd, "@f2", o?.FaceToFaceWithNonOfficial); Add(cmd, "@ad", o?.AttestationDate); Add(cmd, "@en", o?.EmployeeName);
-        Add(cmd, "@ec", o?.EmployeeCode); Add(cmd, "@ed", o?.EmployeeDesignation); Add(cmd, "@eb", o?.EmployeeBranch);
-        Add(cmd, "@eid", o?.EmployeeCkycId); Add(cmd, "@in", o?.InstitutionName); Add(cmd, "@ic", o?.InstitutionCode);
-        Add(cmd, "@dd", o?.DeclarationDocument); Add(cmd, "@df", o?.DeclarationFlag); Add(cmd, "@cc", o?.ClientConsent);
-        Add(cmd, "@pl", o?.Place); Add(cmd, "@dc", o?.DeclarationDate);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task DeleteExistingAsync(DbConnection conn, DbTransaction tx, long masterId, CancellationToken ct)
-    {
-        foreach (var table in new[] { "kyc_record_20", "kyc_record_30", "kyc_record_40", "kyc_record_50", "kyc_record_60", "kyc_record_70" })
+        db.IndividualRecord70s.Add(new IndividualRecord70Entity
         {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = $"DELETE FROM {table} WHERE MasterRecordId=@m";
-            cmd.Parameters.Add(NewParam("@m", masterId));
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
+            MasterRecordId = r.MasterRecordId, CustomerId = r.CustomerId, Record20LineNumber = 1,
+            Remarks = o?.Remarks, VideoKycWithoutOfficial = o?.VideoKycWithoutOfficial,
+            VideoKycWithReOfficial = o?.VideoKycWithReOfficial, FaceToFaceWithReOfficial = o?.FaceToFaceWithReOfficial,
+            NonFaceToFace = o?.NonFaceToFace, FaceToFaceWithNonOfficial = o?.FaceToFaceWithNonOfficial,
+            AttestationDate = o?.AttestationDate, EmployeeName = o?.EmployeeName, EmployeeCode = o?.EmployeeCode,
+            EmployeeDesignation = o?.EmployeeDesignation, EmployeeBranch = o?.EmployeeBranch, EmployeeCkycId = o?.EmployeeCkycId,
+            InstitutionName = o?.InstitutionName, InstitutionCode = o?.InstitutionCode,
+            DeclarationDocument = o?.DeclarationDocument, DeclarationFlag = o?.DeclarationFlag,
+            ClientConsent = o?.ClientConsent, Place = o?.Place, DeclarationDate = o?.DeclarationDate,
+        });
     }
 
-    private static Individual ReadRecord20(DbDataReader r)
+    private static async Task DeleteExistingAsync(CkycDbContext db, long masterId, CancellationToken ct)
     {
-        string? G(string c) => r[c] as string;
-        return new Individual
-        {
-            Id = Convert.ToInt64(r["Id"]),
-            SearchKey = G("SearchKey") ?? "",
-            KycType = G("KycType") ?? "",
-            Name = new PersonName { Title = G("NameTitle") ?? "", FirstName = G("NameFirst") ?? "", MiddleName = G("NameMiddle") ?? "", LastName = G("NameLast") ?? "" },
-            MaidenName = new PersonName { Title = G("MaidenTitle") ?? "", FirstName = G("MaidenFirst") ?? "", MiddleName = G("MaidenMiddle") ?? "", LastName = G("MaidenLast") ?? "" },
-            MotherName = new PersonName { Title = G("MotherTitle") ?? "", FirstName = G("MotherFirst") ?? "", MiddleName = G("MotherMiddle") ?? "", LastName = G("MotherLast") ?? "" },
-            FatherName = new PersonName { Title = G("FatherTitle") ?? "", FirstName = G("FatherFirst") ?? "", MiddleName = G("FatherMiddle") ?? "", LastName = G("FatherLast") ?? "" },
-            SpouseName = new PersonName { Title = G("SpouseTitle") ?? "", FirstName = G("SpouseFirst") ?? "", MiddleName = G("SpouseMiddle") ?? "", LastName = G("SpouseLast") ?? "" },
-            DateOfBirth = G("DateOfBirth"),
-            Gender = G("Gender"),
-            ResidentialStatus = G("ResidentialStatus"),
-            ResidentialStatusSupportedByDocument = G("ResidentialSupportedByDocument"),
-            Nationality = G("Nationality"),
-            NationalitySupportedByDocument = G("NationalitySupportedByDocument"),
-            DifferentlyAbledStatus = G("DifferentlyAbledStatus"),
-            DifferentlyAbledType = G("DifferentlyAbledType"),
-            Pan = G("Pan"),
-            PanVerified = G("PanVerified"),
-            PhotoOfIndividual = G("PhotoOfIndividual"),
-            Minor = G("Minor"),
-            DateOfBirthMatchWithOvd = G("DoBMatchWithOvd"),
-            NameMatchWithOvd = G("NameMatchWithOvd"),
-            PhotoProvidedMatchWithOvd = G("PhotoMatchWithOvd"),
-            GenderProvidedInOvd = G("GenderProvidedInOvd"),
-            GenderMatchWithOvd = G("GenderMatchWithOvd"),
-            Form97Provided = G("Form97Provided"),
-            Form61Provided = G("Form61Provided"),
-            PanDocument = G("PanDocument"),
-            OtherTypeOfImpairment = G("OtherTypeOfImpairment"),
-            DisabilityReferenceNumber = G("DisabilityReferenceNumber"),
-            PermanentDisability = G("PermanentDisability"),
-            DisabilityDate = G("DisabilityDate"),
-            PercentageOfImpairment = G("PercentageOfImpairment"),
-            DifferentlyAbledSupportedByDocument = G("DifferentlyAbledSupportedByDocument"),
-        };
+        await db.Database.ExecuteSqlInterpolatedAsync($$"""
+            DELETE FROM individual_record_20 WHERE MasterRecordId={{masterId}};
+            DELETE FROM individual_record_30 WHERE MasterRecordId={{masterId}};
+            DELETE FROM individual_record_40 WHERE MasterRecordId={{masterId}};
+            DELETE FROM individual_record_50 WHERE MasterRecordId={{masterId}};
+            DELETE FROM individual_record_60 WHERE MasterRecordId={{masterId}};
+            DELETE FROM individual_record_70 WHERE MasterRecordId={{masterId}};
+            """, ct);
     }
-
-    private static void Add(DbCommand cmd, string name, object? value)
-        => cmd.Parameters.Add(NewParam(name, value));
 }

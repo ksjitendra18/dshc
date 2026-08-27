@@ -1,11 +1,13 @@
-using System.Data.Common;
+using System.Text.Json;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Models;
-using static CKYC.Data.MasterRepository;
+using Microsoft.EntityFrameworkCore;
+using BatchEntity = CKYC.Data.Entities.Batch;
+using FvuRunEntity = CKYC.Data.Entities.FvuRun;
 
 namespace CKYC.Data;
 
-/// <summary>Persists the generated-batch and FVU-run audit trail.</summary>
+/// <summary>Persists the generated-batch and FVU-run audit trail (EF Core / SQL Server).</summary>
 public sealed class BatchJournal : IBatchJournal
 {
     private readonly ICkycDatabase _db;
@@ -14,66 +16,57 @@ public sealed class BatchJournal : IBatchJournal
 
     public async Task LogBatchAsync(GeneratedBatch batch, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO batch (BatchKey, UploadFileName, UploadFilePath, ZipPath, RecordCount, CreatedAt)
-            VALUES (@key, @file, @path, @zip, @count, @now)
-            """;
-        cmd.Parameters.Add(NewParam("@key", batch.BatchKey));
-        cmd.Parameters.Add(NewParam("@file", batch.UploadFileName));
-        cmd.Parameters.Add(NewParam("@path", batch.UploadFilePath));
-        cmd.Parameters.Add(NewParam("@zip", batch.ZipPath));
-        cmd.Parameters.Add(NewParam("@count", batch.RecordCount));
-        cmd.Parameters.Add(NewParam("@now", batch.CreatedAt.ToString("o")));
-        await cmd.ExecuteNonQueryAsync(ct);
+        await using var db = _db.CreateContext();
+        db.Batches.Add(new BatchEntity
+        {
+            BatchKey = batch.BatchKey,
+            UploadFileName = batch.UploadFileName,
+            UploadFilePath = batch.UploadFilePath,
+            ZipPath = batch.ZipPath,
+            RecordCount = batch.RecordCount,
+            CreatedAt = batch.CreatedAt,
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task LogFvuRunAsync(FvuRunResult result, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO fvu_run (BatchKey, Executed, ExitCode, Passed, SummaryJson, OutputZipPath, HashValue, ErrorMessage, CreatedAt)
-            VALUES (@key, @exec, @exit, @passed, @summary, @zip, @hash, @err, @now)
-            """;
-        cmd.Parameters.Add(NewParam("@key", result.BatchKey));
-        cmd.Parameters.Add(NewParam("@exec", result.Executed ? 1 : 0));
-        cmd.Parameters.Add(NewParam("@exit", result.ExitCode));
-        cmd.Parameters.Add(NewParam("@passed", result.Passed ? 1 : 0));
-        cmd.Parameters.Add(NewParam("@summary", result.Summary is null ? null : System.Text.Json.JsonSerializer.Serialize(result.Summary)));
-        cmd.Parameters.Add(NewParam("@zip", result.OutputZipPath));
-        cmd.Parameters.Add(NewParam("@hash", result.Hash));
-        cmd.Parameters.Add(NewParam("@err", result.ErrorMessage));
-        cmd.Parameters.Add(NewParam("@now", DateTime.UtcNow.ToString("o")));
-        await cmd.ExecuteNonQueryAsync(ct);
+        await using var db = _db.CreateContext();
+        db.FvuRuns.Add(new FvuRunEntity
+        {
+            BatchKey = result.BatchKey,
+            Executed = result.Executed ? 1 : 0,
+            ExitCode = result.ExitCode,
+            Passed = result.Passed ? 1 : 0,
+            SummaryJson = result.Summary is null ? null : JsonSerializer.Serialize(result.Summary),
+            OutputZipPath = result.OutputZipPath,
+            HashValue = result.Hash,
+            ErrorMessage = result.ErrorMessage,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
     }
 
-    public async Task<GeneratedBatch?> GetLastBatchAsync(CancellationToken ct = default)
-    {
-        return await GetBatchAsync("SELECT * FROM batch ORDER BY Id DESC LIMIT 1", null, ct);
-    }
+    public Task<GeneratedBatch?> GetLastBatchAsync(CancellationToken ct = default)
+        => GetBatchAsync((db) => db.Batches.OrderByDescending(b => b.Id).Take(1), null, ct);
 
     public Task<GeneratedBatch?> GetBatchByKeyAsync(string batchKey, CancellationToken ct = default)
-        => GetBatchAsync("SELECT * FROM batch WHERE BatchKey=@value ORDER BY Id DESC LIMIT 1", batchKey, ct);
+        => GetBatchAsync((db) => db.Batches.Where(b => b.BatchKey == batchKey).OrderByDescending(b => b.Id).Take(1), null, ct);
 
     public Task<GeneratedBatch?> GetBatchByUploadFileAsync(string uploadFileName, CancellationToken ct = default)
-        => GetBatchAsync("SELECT * FROM batch WHERE UploadFileName=@value ORDER BY Id DESC LIMIT 1", uploadFileName, ct);
+        => GetBatchAsync((db) => db.Batches.Where(b => b.UploadFileName == uploadFileName).OrderByDescending(b => b.Id).Take(1), null, ct);
 
-    private async Task<GeneratedBatch?> GetBatchAsync(string sql, string? value, CancellationToken ct)
+    private async Task<GeneratedBatch?> GetBatchAsync(Func<CkycDbContext, IQueryable<BatchEntity>> query, string? _, CancellationToken ct)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        if (value is not null) cmd.Parameters.Add(NewParam("@value", value));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        if (!await r.ReadAsync(ct)) return null;
+        await using var db = _db.CreateContext();
+        var batch = await query(db).AsNoTracking().FirstOrDefaultAsync(ct);
+        if (batch is null) return null;
         return new GeneratedBatch(
-            r["BatchKey"] as string ?? "",
-            r["UploadFileName"] as string ?? "",
-            r["UploadFilePath"] as string ?? "",
-            r["ZipPath"] as string,
-            Convert.ToInt32(r["RecordCount"]),
-            r["CreatedAt"] is string s && DateTime.TryParse(s, out var d) ? d : DateTime.MinValue);
+            batch.BatchKey ?? "",
+            batch.UploadFileName ?? "",
+            batch.UploadFilePath ?? "",
+            batch.ZipPath,
+            batch.RecordCount ?? 0,
+            batch.CreatedAt ?? DateTime.MinValue);
     }
 }

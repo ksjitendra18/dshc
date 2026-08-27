@@ -34,7 +34,7 @@ internal static class SearchResponseReader
         var lines = content.Split(NewLines, StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length == 0) throw new InvalidDataException($"Response file '{responseFileName}' is empty.");
         var headerFields = lines[0].Split('|');
-        if (headerFields.Length < 8 || headerFields[0] != "10")
+        if (headerFields.Length < 9 || headerFields[0] != "10")
             throw new InvalidDataException($"Response file '{responseFileName}' has no valid record-10 header.");
         var header = new SearchResponseHeader
         {
@@ -50,7 +50,8 @@ internal static class SearchResponseReader
         {
             var fields = line.Split('|');
             if (fields.Length == 0 || fields[0] != "20") continue;
-            if (fields.Length < 21) throw new InvalidDataException($"Response detail in '{responseFileName}' has fewer than 21 fields.");
+            if (fields.Length < 47)
+                throw new InvalidDataException($"Response detail in '{responseFileName}' has fewer than 47 workbook fields.");
             details.Add(new SearchResponseDetail
             {
                 LineNumber = Number(At(fields, 1)), ClientType = At(fields, 2), InputRecordLineNumber = Number(At(fields, 3)),

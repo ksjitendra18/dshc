@@ -41,7 +41,7 @@ processed `.zip` plus the file-level SHA-256 hash.
 | Project           | Responsibility                                                                 |
 |-------------------|--------------------------------------------------------------------------------|
 | `CKYC.Core`       | Domain models (`Individual`, record types 20/30/40/50/60/70), settings, CKYC file-format spec, contracts (repositories / CRM / batch / FVU / hashing). |
-| `CKYC.Data`       | SQLite persistence — schema bootstrap, master-table repository, record-table repository, batch/FVU audit journal. |
+| `CKYC.Data`       | EF Core 10 / SQL Server persistence, repositories, document store, and batch/FVU audit journal. |
 | `CKYC.Crm`        | Dummy CRM: `DummyCrmDataProvider` (deterministic fake data), `HttpCrmApiClient`, and a self-hosted Kestrel API (`CrmServer`). |
 | `CKYC.Files`      | `CkycUploadWriter` (pipe-delimited .UPL per the validated field layout), `CkycBatchGenerator` (writes .UPL + supporting docs + zip), hashing. |
 | `CKYC.Fvu`        | `FvuConfigGenerator` (writes the FVU `config.yaml`), `CommandLineFvuRunner` (subprocess integration + JSON/exit-code parsing + hash extraction), deterministic simulation fallback. |
@@ -58,8 +58,9 @@ and is reached over HTTP, so swapping in the production CRM is a one-line config
 
 The CKYC record tables retain their original length-only convention. The binary-document
 tables additionally enforce required fields, content-hash/name uniqueness, positive length,
-and foreign keys so document content cannot be orphaned or ambiguously assigned. All tables
-are created on startup.
+and foreign keys so document content cannot be orphaned or ambiguously assigned. Provision the
+database with `scripts/sqlserver/schema.sql`; application startup verifies the schema but does
+not run production DDL.
 
 - `master_record` — step 1: daily customer ids + a **single current-stage** `Status`
   (Pending → CrmFetched → Saved → Batched → Uploaded → ResponseRead → Reconciled/Rejected),
@@ -82,14 +83,10 @@ are created on startup.
 - `master_record_reattempt` — one row per **manual re-push (reattempt)** of a rejected record,
   snapshotting the previous response (status, ack, CKYC ref/number, rejection remark and the
   read date/timestamp) together with the reset flag state.
-- `kyc_record_20` — demographics (record type 20).
-- `kyc_record_30` — proof of identity & address (record type 30).
-- `kyc_record_40` — address, permanent + current (record type 40).
-- `kyc_record_50` — contact (record type 50).
-- `kyc_record_60` — related party (record type 60).
-- `kyc_record_70` — other details & attestation (record type 70).
+- `individual_record_20` … `individual_record_70` — individual record types 20–70.
+- `legal_entity_record_20` … `legal_entity_record_70` — legal-entity record types 20–70.
 - `file_content` — globally SHA-256-deduplicated PDF/JPEG bytes.
-- `customer_document` — a customer/master-record filename mapped to content, MIME type,
+- `individual_document` / `legal_entity_document` — a customer/master-record filename mapped to content, MIME type,
   source metadata, and import timestamps.
 - `batch`, `fvu_run` — audit trail of generated batches and FVU runs.
 - `search_request` — vendor individual-search request fields plus the pending/processing/
@@ -103,8 +100,7 @@ are created on startup.
 - `update_response_file`, `update_response` — the `.UPD.RESm` record-80 header and record-90
   details (`02 No Match` / `03 Rejected`) defined by both update-format workbooks.
 
-The SQL Server equivalent is in `scripts/sqlserver/schema.sql` (set `database.provider`
-= `sqlserver` and supply a matching connection string).
+The authoritative database-first schema is `scripts/sqlserver/schema.sql`.
 
 ### Supporting documents
 
@@ -332,7 +328,7 @@ latest CERSAI reply) and printed to the console.
 
 Configuration lives in `appsettings.json` (JSON). Key sections:
 
-- `database` — provider (`sqlite`/`sqlserver`) + connection string.
+- `database` — SQL Server provider + connection string and command timeout.
 - `source` — daily customer-id source (`generate` seed/count or a `file` of ids).
 - `crm` — CRM base URL + endpoints (point at production to replace the dummy).
 - `batch` — user id, FI code, region, client type (`I`), version (`V1.0`), output root.

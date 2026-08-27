@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
@@ -20,8 +21,7 @@ internal static class DownloadResponseReader
 
         using var zip = ZipFile.OpenRead(path);
         var responseEntries = zip.Entries.Where(e => !string.IsNullOrEmpty(e.Name)
-            && e.FullName.Contains(".DWN.RES", StringComparison.OrdinalIgnoreCase)
-            && e.Name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)).ToList();
+            && e.FullName.Contains(".DWN.RES", StringComparison.OrdinalIgnoreCase)).ToList();
         if (responseEntries.Count == 0)
             throw new InvalidDataException($"Download ZIP '{archiveName}' contains no .DWN.RES text file.");
 
@@ -29,9 +29,8 @@ internal static class DownloadResponseReader
         foreach (var entry in zip.Entries.Where(e => !string.IsNullOrEmpty(e.Name) && !responseEntries.Contains(e)))
         {
             await using var stream = entry.Open();
-            using var memory = new MemoryStream();
-            await stream.CopyToAsync(memory, ct);
-            artifacts.Add(new DownloadArtifact(entry.FullName, entry.Name, entry.Length, hasher.ComputeSha256(memory.ToArray())));
+            var artifactHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
+            artifacts.Add(new DownloadArtifact(entry.FullName, entry.Name, entry.Length, artifactHash));
         }
 
         var result = new List<DownloadResponseImport>();
@@ -58,7 +57,8 @@ internal static class DownloadResponseReader
         var rows = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         if (rows.Length == 0) throw new InvalidDataException($"Download response '{name}' is empty.");
         var header = rows[0].Split('|');
-        if (At(header, 0) != "10") throw new InvalidDataException($"Download response '{name}' has no record-10 header.");
+        if (header.Length < 7 || At(header, 0) != "10")
+            throw new InvalidDataException($"Download response '{name}' has no valid record-10 header.");
 
         var import = new DownloadResponseImport
         {

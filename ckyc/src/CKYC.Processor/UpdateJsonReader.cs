@@ -76,6 +76,13 @@ internal static class UpdateJsonReader
             stringValue = stringValue.Trim();
             if (field.Date) stringValue = NormalizeDate(stringValue) ?? stringValue;
             if (field.CompactDate) stringValue = NormalizeCompactDate(stringValue) ?? stringValue;
+            if (field.Size > 0 && stringValue.Length > field.Size)
+                throw new InvalidDataException(
+                    $"Stored update for CKYC {request.CkycNumber} contains overlength field '{field.Key}'.");
+            if (field.Key is "permMatchWithOvd" or "currAddressExactlyMatch"
+                && !IsMatchClassification(stringValue))
+                throw new InvalidDataException(
+                    $"Stored update for CKYC {request.CkycNumber} has invalid match classification '{stringValue}'.");
             request.Values[field.Key] = stringValue;
         }
     }
@@ -152,6 +159,13 @@ internal static class UpdateJsonReader
                 continue;
             }
 
+            if (field.Key is "permMatchWithOvd" or "currAddressExactlyMatch"
+                && !IsMatchClassification(stringValue))
+            {
+                errors.Add($"Row {row}: field '{field.Key}' must be Exact Match, No Match, or Partial Match.");
+                continue;
+            }
+
             if (field.Flag && string.Equals(stringValue, "Y", StringComparison.OrdinalIgnoreCase)) anyFlagSet = true;
             request.Values[field.Key] = stringValue;
         }
@@ -213,6 +227,10 @@ internal static class UpdateJsonReader
 
     private static string Normalize(string value)
         => new(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+    private static bool IsMatchClassification(string value)
+        => new[] { "Exact Match", "No Match", "Partial Match" }
+            .Contains(value, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Lazily-built index of every catalogue field, for intake-time name resolution.</summary>
     private static class UpdateFieldIndex

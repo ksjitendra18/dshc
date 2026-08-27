@@ -191,9 +191,10 @@ FVU-invalid — re-check section 1a (family name, DOB, PAN + PAN doc, valid coun
 
 - **Clean DB per run.** `build-zip` batches **every** currently-`Saved` record. If you run the
   happy flow twice without resetting, the second run re-batches older records. For a clean
-  single-customer test, delete the DB first:
+  LocalDB test, recreate the database and apply the schema:
   ```powershell
-  Remove-Item .\runtime\ckyc.db -ErrorAction SilentlyContinue
+  sqlcmd -S "(localdb)\MSSQLLocalDB" -d master -b -Q "IF DB_ID('CkycCentral') IS NOT NULL BEGIN ALTER DATABASE [CkycCentral] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [CkycCentral]; END; CREATE DATABASE [CkycCentral];"
+  sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral -b -i .\scripts\sqlserver\schema.sql
   ```
 - **Don't run `store` for this test.** `store` (the CRM enrich path) uses the save-error
   simulation (`appsettings.json` has `saveErrorsEnabled:true`) and would inject failures. The

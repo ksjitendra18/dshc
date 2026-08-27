@@ -42,7 +42,7 @@ internal static class UpdateResponseReader
         var lines = content.Split(NewLines, StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length == 0) throw new InvalidDataException($"Response file '{responseFileName}' is empty.");
         var headerFields = lines[0].Split('|');
-        if (headerFields[0] != "80")
+        if (headerFields.Length < 11 || headerFields[0] != "80")
             throw new InvalidDataException($"Response file '{responseFileName}' has no valid record-80 header.");
         var header = new UpdateResponseHeader
         {
@@ -54,7 +54,7 @@ internal static class UpdateResponseReader
             ResponseTimestamp = At(headerFields, 8), Filler1 = At(headerFields, 9), Filler2 = At(headerFields, 10),
             RawHeaderData = lines[0],
         };
-        if (!string.IsNullOrWhiteSpace(header.ResponseTimestamp))
+        if (header.ResponseTimestamp is { Length: >= 10 })
         {
             // Normalise the DD-MM-YYYY(/timestamp) stamp to sortable order where parseable.
             if (DateTime.TryParseExact(header.ResponseTimestamp[..10], "dd-MM-yyyy",

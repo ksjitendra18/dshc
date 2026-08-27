@@ -1,12 +1,24 @@
-using System.Data;
-using System.Data.Common;
-using System.Text;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
+using Microsoft.EntityFrameworkCore;
+using ActivityTypeEntity = CKYC.Data.Entities.ActivityType;
+using MasterRecordAttemptEntity = CKYC.Data.Entities.MasterRecordAttempt;
+using MasterRecordBatchEntity = CKYC.Data.Entities.MasterRecordBatch;
+using MasterRecordEntity = CKYC.Data.Entities.MasterRecord;
+using MasterRecordReattemptEntity = CKYC.Data.Entities.MasterRecordReattempt;
+using MasterRecordResponseEntity = CKYC.Data.Entities.MasterRecordResponse;
+using StatusMasterEntity = CKYC.Data.Entities.StatusMaster;
+using UploadResponseFileEntity = CKYC.Data.Entities.UploadResponseFile;
 
 namespace CKYC.Data;
 
+/// <summary>
+/// EF Core (SQL Server) implementation of the master table operations: daily fetch
+/// upsert, stage transitions, retry bookkeeping, CERSAI response mirroring and the
+/// master lookups. Every status write also maintains the denormalized StatusCode
+/// column (PND/CRM/SAV/BAT/…) in the same statement so the two never drift.
+/// </summary>
 public sealed class MasterRepository : IMasterRepository
 {
     private readonly ICkycDatabase _db;
@@ -17,350 +29,383 @@ public sealed class MasterRepository : IMasterRepository
     {
         if (customerIds.Count == 0) return new FetchResult(0, 0, 0);
 
-        var now = DateTime.UtcNow.ToString("o");
-        var business = businessDate.ToString("yyyy-MM-dd");
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync("CKYC:master-record-upsert", ct);
+        var existing = await db.MasterRecords
+            .Where(m => customerIds.Contains(m.CustomerId!))
+            .Select(m => m.CustomerId)
+            .ToListAsync(ct);
+        var existingSet = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // One prepared command, one transaction. The previous implementation loaded the whole
-        // table into a HashSet (O(table) on every run) and issued one autocommit INSERT per id.
-        // Here each row's existence is checked against the CustomerId index via NOT EXISTS, so
-        // the dedup is O(ids) and the inserts commit together (N fsyncs -> 1).
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = localTx;
-        cmd.CommandText = """
-            INSERT INTO master_record
-                (CustomerId, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
-            SELECT @id, @date, 0, @remarks, 0, @now, @now
-             WHERE NOT EXISTS (SELECT 1 FROM master_record WHERE CustomerId=@id)
-            """;
-        var pId = new Microsoft.Data.Sqlite.SqliteParameter("@id", DBNull.Value);
-        cmd.Parameters.Add(pId);
-        cmd.Parameters.Add(NewParam("@date", business));
-        cmd.Parameters.Add(NewParam("@remarks", $"Fetched on {businessDate:dd-MM-yyyy}"));
-        cmd.Parameters.Add(NewParam("@now", now));
-
-        int inserted = 0;
+        var inserted = 0;
         foreach (var id in customerIds)
         {
-            pId.Value = id;
-            inserted += await cmd.ExecuteNonQueryAsync(ct);
+            // Add returns false for both a database hit and an earlier duplicate in this
+            // input collection, preserving the SQLite INSERT..WHERE NOT EXISTS behavior.
+            if (!existingSet.Add(id)) continue;
+            db.MasterRecords.Add(new MasterRecordEntity
+            {
+                CustomerId = id,
+                BusinessDate = businessDate,
+                Status = (int)MasterRecordStatus.Pending,
+                StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Pending),
+                Remarks = $"Fetched on {businessDate:dd-MM-yyyy}",
+                RetryCount = 0,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            inserted++;
         }
-
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new FetchResult(inserted, customerIds.Count - inserted, customerIds.Count);
     }
 
     public async Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default)
     {
-        var filter = string.IsNullOrWhiteSpace(clientType) ? "" : " AND ClientType=@ct";
-        return await QueryAsync($"SELECT * FROM master_record WHERE Status=@s{filter} ORDER BY Id LIMIT @n",
-            c =>
-            {
-                c.Parameters.Add(NewParam("@s", (int)status));
-                c.Parameters.Add(NewParam("@n", limit));
-                if (!string.IsNullOrWhiteSpace(clientType)) c.Parameters.Add(NewParam("@ct", clientType));
-            }, ct);
+        await using var db = _db.CreateContext();
+        var query = db.MasterRecords.AsNoTracking()
+            .Where(m => m.Status == (int)status);
+        if (!string.IsNullOrWhiteSpace(clientType))
+            query = query.Where(m => m.ClientType == clientType);
+        var rows = await query.OrderBy(m => m.Id).Take(limit).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
     }
 
     public async Task<IReadOnlyList<MasterRecord>> GetRetryableAsync(int maxRetries, int limit, CancellationToken ct = default)
-        => await QueryAsync(
-            "SELECT * FROM master_record WHERE Status=@failed AND RetryCount < @max ORDER BY Id LIMIT @n",
-            c => { c.Parameters.Add(NewParam("@failed", (int)MasterRecordStatus.Failed));
-                   c.Parameters.Add(NewParam("@max", maxRetries));
-                   c.Parameters.Add(NewParam("@n", limit)); }, ct);
+    {
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecords.AsNoTracking()
+            .Where(m => m.Status == (int)MasterRecordStatus.Failed && m.RetryCount < maxRetries)
+            .OrderBy(m => m.Id).Take(limit).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
+    }
 
     public async Task<IReadOnlyList<MasterRecord>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default)
     {
         if (customerIds.Count == 0) return Array.Empty<MasterRecord>();
-        var placeholders = string.Join(",", customerIds.Select((_, i) => $"@v{i}"));
-        return await QueryAsync($"SELECT * FROM master_record WHERE CustomerId IN ({placeholders})",
-            c => { var i = 0; foreach (var id in customerIds) c.Parameters.Add(NewParam($"@v{i++}", id)); }, ct);
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecords.AsNoTracking()
+            .Where(m => customerIds.Contains(m.CustomerId!))
+            .OrderBy(m => m.Id).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
     }
 
     public async Task<MasterRecord?> GetByIdAsync(long id, CancellationToken ct = default)
     {
-        var rows = await QueryAsync("SELECT * FROM master_record WHERE Id=@id",
-            c => c.Parameters.Add(NewParam("@id", id)), ct);
-        return rows.Count > 0 ? rows[0] : null;
-    }
-
-    public async Task<IReadOnlyList<MasterRecord>> GetByBatchFileAsync(string batchFile, CancellationToken ct = default)
-        => await QueryAsync("""
-            SELECT DISTINCT m.* FROM master_record m
-            JOIN master_record_batch b ON b.MasterRecordId=m.Id
-            WHERE b.BatchFile=@b ORDER BY m.Id
-            """,
-            c => c.Parameters.Add(NewParam("@b", batchFile)), ct);
-
-    public async Task<MasterRecord?> GetByBatchLineAsync(string batchFile, int record20Line, CancellationToken ct = default)
-    {
-        var rows = await QueryAsync("""
-            SELECT m.* FROM master_record m
-            JOIN master_record_batch b ON b.MasterRecordId=m.Id
-            WHERE b.BatchFile=@b AND b.Record20LineNumber=@l
-            ORDER BY b.Id DESC
-            """,
-            c => { c.Parameters.Add(NewParam("@b", batchFile)); c.Parameters.Add(NewParam("@l", record20Line)); }, ct);
-        return rows.Count > 0 ? rows[0] : null;
-    }
-
-    public async Task<IReadOnlyList<CustomerBatchRecord>> GetBatchHistoryAsync(string customerId, CancellationToken ct = default)
-    {
-        var result = new List<CustomerBatchRecord>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM master_record_batch WHERE CustomerId=@id ORDER BY BatchedAt, Id";
-        cmd.Parameters.Add(NewParam("@id", customerId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-        {
-            result.Add(new CustomerBatchRecord
-            {
-                Id = Convert.ToInt64(r["Id"]),
-                MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
-                CustomerId = r["CustomerId"] as string ?? string.Empty,
-                BatchFile = r["BatchFile"] as string ?? string.Empty,
-                Record20LineNumber = r["Record20LineNumber"] is DBNull ? null : Convert.ToInt32(r["Record20LineNumber"]),
-                BatchedAt = r["BatchedAt"] is string value && DateTime.TryParse(value, out var parsed) ? parsed : DateTime.MinValue,
-            });
-        }
-        return result;
+        await using var db = _db.CreateContext();
+        var row = await db.MasterRecords.AsNoTracking().SingleOrDefaultAsync(m => m.Id == id, ct);
+        return row is null ? null : ToDomain(row);
     }
 
     public async Task<MasterRecord> EnsureAsync(string customerId, DateOnly businessDate, string? clientType = null, CancellationToken ct = default)
     {
-        var existing = await GetByCustomerIdsAsync(new[] { customerId }, ct);
-        if (existing.Count > 0) return existing[0];
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync("CKYC:master-record-upsert", ct);
+        var existing = await db.MasterRecords.FirstOrDefaultAsync(m => m.CustomerId == customerId, ct);
+        if (existing is not null)
+        {
+            await tx.CommitAsync(ct);
+            return ToDomain(existing);
+        }
 
-        var now = DateTime.UtcNow.ToString("o");
-        var business = businessDate.ToString("yyyy-MM-dd");
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO master_record
-                (CustomerId, ClientType, BusinessDate, Status, Remarks, RetryCount, CreatedAt, UpdatedAt)
-            VALUES
-                (@id, @ct, @date, 0, @remarks, 0, @now, @now)
-            """;
-        cmd.Parameters.Add(NewParam("@id", customerId));
-        cmd.Parameters.Add(NewParam("@ct", string.IsNullOrWhiteSpace(clientType) ? "I" : clientType));
-        cmd.Parameters.Add(NewParam("@date", business));
-        cmd.Parameters.Add(NewParam("@remarks", $"Inserted on {businessDate:dd-MM-yyyy}"));
-        cmd.Parameters.Add(NewParam("@now", now));
-        await cmd.ExecuteNonQueryAsync(ct);
-
-        var rows = await QueryAsync("SELECT * FROM master_record WHERE CustomerId=@id",
-            c => c.Parameters.Add(NewParam("@id", customerId)), ct);
-        return rows[0];
+        var now = DateTime.UtcNow;
+        var row = new MasterRecordEntity
+        {
+            CustomerId = customerId,
+            ClientType = string.IsNullOrWhiteSpace(clientType) ? "I" : clientType,
+            BusinessDate = businessDate,
+            Status = (int)MasterRecordStatus.Pending,
+            StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Pending),
+            Remarks = $"Inserted on {businessDate:dd-MM-yyyy}",
+            RetryCount = 0,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.MasterRecords.Add(row);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return ToDomain(row);
     }
 
-    /// <summary>
-    /// Transitions the record to <paramref name="status"/> and, when that status maps to a
-    /// pipeline stage, sets the matching <c>Is*</c> flag and first-reached timestamp.
-    /// </summary>
+    public async Task<IReadOnlyList<MasterRecord>> GetByBatchFileAsync(string batchFile, CancellationToken ct = default)
+    {
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecords.AsNoTracking()
+            .Where(m => db.MasterRecordBatches.Any(b => b.MasterRecordId == m.Id && b.BatchFile == batchFile))
+            .OrderBy(m => m.Id).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
+    }
+
+    public async Task<MasterRecord?> GetByBatchLineAsync(string batchFile, int record20Line, CancellationToken ct = default)
+    {
+        await using var db = _db.CreateContext();
+        var row = await db.MasterRecordBatches.AsNoTracking()
+            .Where(b => b.BatchFile == batchFile && b.Record20LineNumber == record20Line)
+            .OrderByDescending(b => b.Id)
+            .Join(db.MasterRecords.AsNoTracking(), b => b.MasterRecordId, m => m.Id, (b, m) => m)
+            .FirstOrDefaultAsync(ct);
+        return row is null ? null : ToDomain(row);
+    }
+
+    public async Task<IReadOnlyList<CustomerBatchRecord>> GetBatchHistoryAsync(string customerId, CancellationToken ct = default)
+    {
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecordBatches.AsNoTracking()
+            .Where(b => b.CustomerId == customerId)
+            .OrderBy(b => b.BatchedAt).ThenBy(b => b.Id)
+            .Select(b => new CustomerBatchRecord
+            {
+                Id = b.Id,
+                MasterRecordId = b.MasterRecordId ?? 0,
+                CustomerId = b.CustomerId ?? string.Empty,
+                BatchFile = b.BatchFile ?? string.Empty,
+                Record20LineNumber = b.Record20LineNumber,
+                BatchedAt = b.BatchedAt ?? DateTime.MinValue,
+            })
+            .ToListAsync(ct);
+        return rows;
+    }
+
     public async Task<bool> UpdateStatusAsync(long id, MasterRecordStatus status, string? remarks, string? lastError, CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow.ToString("o");
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        var row = await db.MasterRecords.SingleOrDefaultAsync(m => m.Id == id, ct);
+        if (row is null) return false;
+
+        row.Status = (int)status;
+        row.StatusCode = MasterRecordStatusCode.For(status);
+        row.Remarks = remarks;
+        row.LastError = lastError;
+        row.LastAttemptAt = now;
+        row.UpdatedAt = now;
+
         var (flag, timestamp) = StageFor(status);
+        switch (flag)
+        {
+            case "IsCrmFetched": row.IsCrmFetched = 1; break;
+            case "IsSaved": row.IsSaved = 1; break;
+            case "IsBatched": row.IsBatched = 1; break;
+            case "IsUploaded": row.IsUploaded = 1; break;
+            case "IsResponseRead": row.IsResponseRead = 1; break;
+            case "IsReconciled": row.IsReconciled = 1; break;
+            case "IsRejected": row.IsRejected = 1; break;
+        }
+        switch (timestamp)
+        {
+            case "CrmFetchedAt": row.CrmFetchedAt ??= now; break;
+            case "SavedAt": row.SavedAt ??= now; break;
+            case "BatchedAt": row.BatchedAt ??= now; break;
+            case "UploadedAt": row.UploadedAt ??= now; break;
+            case "FirstResponseAt": row.FirstResponseAt ??= now; break;
+            case "ReconciledAt": row.ReconciledAt ??= now; break;
+        }
 
-        var set = new StringBuilder(
-            "SET Status=@s, Remarks=@remarks, LastError=@err, LastAttemptAt=@attempt, UpdatedAt=@upd");
-        if (flag is not null) set.Append($", {flag}=1");
-        // Preserve the FIRST time each stage was reached (a stage is only ever reached once).
-        if (timestamp is not null) set.Append($", {timestamp}=COALESCE({timestamp}, @now)");
-
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"UPDATE master_record {set} WHERE Id=@id";
-        cmd.Parameters.Add(NewParam("@s", (int)status));
-        cmd.Parameters.Add(NewParam("@remarks", remarks));
-        cmd.Parameters.Add(NewParam("@err", lastError));
-        cmd.Parameters.Add(NewParam("@attempt", now));
-        cmd.Parameters.Add(NewParam("@upd", now));
-        cmd.Parameters.Add(NewParam("@now", now));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     public async Task<bool> IncrementRetryAsync(long id, string? lastError, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE master_record
-               SET RetryCount=RetryCount+1, LastError=@err, LastAttemptAt=@attempt, UpdatedAt=@upd
-             WHERE Id=@id
-            """;
-        cmd.Parameters.Add(NewParam("@err", lastError));
-        cmd.Parameters.Add(NewParam("@attempt", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@upd", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.RetryCount, m => m.RetryCount + 1)
+                .SetProperty(m => m.LastError, lastError)
+                .SetProperty(m => m.LastAttemptAt, now)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
+    public async Task<bool> RecordRetryAsync(long id, int retryCount, string? lastError, string? lastActivity,
+        DateTime? nextRetryAt, bool needsReconcile, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.RetryCount, retryCount)
+                .SetProperty(m => m.LastError, lastError)
+                .SetProperty(m => m.LastActivity, lastActivity)
+                .SetProperty(m => m.LastAttemptAt, now)
+                .SetProperty(m => m.NextRetryAt, nextRetryAt)
+                .SetProperty(m => m.NeedsReconcile, needsReconcile ? 1 : 0)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
+    public async Task<bool> MarkNeedsReconcileAsync(long id, string reason, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.NeedsReconcile, 1)
+                .SetProperty(m => m.ReconStatus, "NeedsIntervention")
+                .SetProperty(m => m.ReconRemarks, reason)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
+    public async Task<bool> ClearRetryStateAsync(long id, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.RetryCount, 0)
+                .SetProperty(m => m.LastError, (string?)null)
+                .SetProperty(m => m.LastActivity, (string?)null)
+                .SetProperty(m => m.NextRetryAt, (DateTime?)null)
+                .SetProperty(m => m.NeedsReconcile, 0)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
+    public async Task<IReadOnlyList<MasterRecord>> GetRetryableForActivityAsync(string activityCode, int maxAttempts,
+        DateTime now, int limit, CancellationToken ct)
+    {
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecords.AsNoTracking()
+            .Where(m => m.Status == (int)MasterRecordStatus.Failed
+                     && m.RetryCount < maxAttempts
+                     && m.LastActivity == activityCode
+                     && (m.NextRetryAt == null || m.NextRetryAt <= now))
+            .OrderBy(m => m.Id).Take(limit).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
+    }
+
+    public async Task<IReadOnlyList<MasterRecord>> GetNeedsReconcileAsync(string? kind, int limit, CancellationToken ct)
+    {
+        await using var db = _db.CreateContext();
+        var failed = (int)MasterRecordStatus.Failed;
+        var rejected = (int)MasterRecordStatus.Rejected;
+        var fvuFailed = (int)MasterRecordStatus.FvuFailed;
+
+        var query = kind switch
+        {
+            "retry" => db.MasterRecords.AsNoTracking()
+                .Where(m => m.NeedsReconcile == 1 && (m.Status == failed || m.Status == rejected)),
+            "cersai" => db.MasterRecords.AsNoTracking()
+                .Where(m => m.Status == rejected || m.IsRejected == 1 || m.Status == fvuFailed),
+            _ => db.MasterRecords.AsNoTracking()
+                .Where(m => m.NeedsReconcile == 1 || m.Status == rejected || m.IsRejected == 1 || m.Status == fvuFailed),
+        };
+
+        var rows = await query.OrderBy(m => m.Id).Take(limit).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
     }
 
     public async Task<int> MarkBatchAsync(IReadOnlyCollection<long> ids, string batchFile,
         IReadOnlyDictionary<long, int>? lineByRecord, CancellationToken ct = default)
     {
         if (ids.Count == 0) return 0;
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
-        var placeholders = string.Join(",", ids.Select((_, i) => $"@v{i}"));
-        var now = DateTime.UtcNow.ToString("o");
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        await using (var cmd = conn.CreateCommand())
+        var rows = await db.MasterRecords.Where(m => ids.Contains(m.Id)).ToListAsync(ct);
+        var rowIds = rows.Select(row => row.Id).ToList();
+        await db.MasterRecordBatches
+            .Where(b => rowIds.Contains(b.MasterRecordId ?? 0) && b.BatchFile == batchFile)
+            .ExecuteDeleteAsync(ct);
+        foreach (var row in rows)
         {
-            cmd.Transaction = localTx;
-            cmd.CommandText = $"UPDATE master_record SET Status=@s, BatchFile=@bf, IsBatched=1, BatchedAt=COALESCE(BatchedAt,@now), UpdatedAt=@upd WHERE Id IN ({placeholders})";
-            cmd.Parameters.Add(NewParam("@s", (int)MasterRecordStatus.Batched));
-            cmd.Parameters.Add(NewParam("@bf", batchFile));
-            cmd.Parameters.Add(NewParam("@now", now));
-            cmd.Parameters.Add(NewParam("@upd", now));
-            var i2 = 0;
-            foreach (var id in ids) cmd.Parameters.Add(NewParam($"@v{i2++}", id));
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
+            row.Status = (int)MasterRecordStatus.Batched;
+            row.StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Batched);
+            row.BatchFile = batchFile;
+            row.IsBatched = 1;
+            row.BatchedAt ??= now;
+            row.UpdatedAt = now;
+            if (lineByRecord is not null && lineByRecord.TryGetValue(row.Id, out var line))
+                row.BatchRecordLine = line;
 
-        if (lineByRecord is { Count: > 0 })
-        {
-            foreach (var (recordId, line) in lineByRecord)
+            db.MasterRecordBatches.Add(new MasterRecordBatchEntity
             {
-                await using var lcmd = conn.CreateCommand();
-                lcmd.Transaction = localTx;
-                lcmd.CommandText = "UPDATE master_record SET BatchRecordLine=@l WHERE Id=@id";
-                lcmd.Parameters.Add(NewParam("@l", line));
-                lcmd.Parameters.Add(NewParam("@id", recordId));
-                await lcmd.ExecuteNonQueryAsync(ct);
-            }
+                MasterRecordId = row.Id,
+                CustomerId = row.CustomerId,
+                BatchFile = batchFile,
+                Record20LineNumber = row.BatchRecordLine,
+                BatchedAt = now,
+            });
         }
 
-        foreach (var recordId in ids)
-        {
-            await using (var delete = conn.CreateCommand())
-            {
-                delete.Transaction = localTx;
-                delete.CommandText = "DELETE FROM master_record_batch WHERE MasterRecordId=@id AND BatchFile=@batch";
-                delete.Parameters.Add(NewParam("@id", recordId));
-                delete.Parameters.Add(NewParam("@batch", batchFile));
-                await delete.ExecuteNonQueryAsync(ct);
-            }
-
-            await using var insert = conn.CreateCommand();
-            insert.Transaction = localTx;
-            insert.CommandText = """
-                INSERT INTO master_record_batch (MasterRecordId, CustomerId, BatchFile, Record20LineNumber, BatchedAt)
-                SELECT Id, CustomerId, @batch, BatchRecordLine, @now FROM master_record WHERE Id=@id
-                """;
-            insert.Parameters.Add(NewParam("@id", recordId));
-            insert.Parameters.Add(NewParam("@batch", batchFile));
-            insert.Parameters.Add(NewParam("@now", now));
-            await insert.ExecuteNonQueryAsync(ct);
-        }
-
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return ids.Count;
+        return rows.Count;
     }
 
     public async Task<int> CountByStatusAsync(MasterRecordStatus status, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM master_record WHERE Status=@s";
-        cmd.Parameters.Add(NewParam("@s", (int)status));
-        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords.CountAsync(m => m.Status == (int)status, ct);
     }
 
-    /// <summary>
-    /// Persists one CERSAI reply detail into <c>master_record_response</c> and mirrors the
-    /// latest values onto the master row (status → <see cref="MasterRecordStatus.ResponseRead"/>,
-    /// <c>IsResponseRead</c>, first-response timestamp and the <c>LastResponse*</c> summary).
-    /// </summary>
     public async Task<MasterRecordResponse> AddResponseAsync(MasterRecordResponse response, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var nowStr = now.ToString("o");
         var readAt = response.ReadAt ?? now;
 
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync($"CKYC:master-response:{response.MasterRecordId}", ct);
 
-        // Idempotent re-read: if this (record, response file, line) was already read, replace
-        // it rather than stacking duplicates, then re-apply the latest summary to the master row.
-        await using (var del = conn.CreateCommand())
+        // Idempotent re-read: replace any prior row for this (record, response file, line).
+        await db.MasterRecordResponses
+            .Where(r => r.MasterRecordId == response.MasterRecordId
+                     && r.ResponseFileName == response.ResponseFileName
+                     && r.LineNumber == response.LineNumber)
+            .ExecuteDeleteAsync(ct);
+
+        db.MasterRecordResponses.Add(new MasterRecordResponseEntity
         {
-            del.Transaction = localTx;
-            del.CommandText = """
-                DELETE FROM master_record_response
-                 WHERE MasterRecordId=@mid AND ResponseFileName=@rfile AND LineNumber=@ln
-                """;
-            del.Parameters.Add(NewParam("@mid", response.MasterRecordId));
-            del.Parameters.Add(NewParam("@rfile", response.ResponseFileName));
-            del.Parameters.Add(NewParam("@ln", response.LineNumber));
-            await del.ExecuteNonQueryAsync(ct);
+            MasterRecordId = response.MasterRecordId,
+            CustomerId = response.CustomerId,
+            BatchFile = response.BatchFile,
+            ResponseFileNumber = response.ResponseFileNumber,
+            ResponseFileName = response.ResponseFileName,
+            LineNumber = response.LineNumber,
+            InputRecordLineNumber = response.InputRecordLineNumber,
+            AckNumber = response.AckNumber,
+            RecordStatus = response.RecordStatus,
+            CkycReferenceNumber = response.CkycReferenceNumber,
+            CkycNumber = response.CkycNumber,
+            RejectionRemark = response.RejectionRemark,
+            ReadAt = readAt,
+            Remarks = response.Remarks,
+            RawData = response.RawData,
+            CreatedAt = now,
+        });
+        // Mirror the latest reply onto the master summary, but never regress to an
+        // older response file number.
+        var master = await db.MasterRecords
+            .Where(m => m.Id == response.MasterRecordId && m.BatchFile == response.BatchFile
+                     && (m.LastResponseFileNumber == null || response.ResponseFileNumber >= m.LastResponseFileNumber))
+            .SingleOrDefaultAsync(ct);
+        if (master is not null)
+        {
+            master.Status = (int)MasterRecordStatus.ResponseRead;
+            master.StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.ResponseRead);
+            master.IsResponseRead = 1;
+            master.FirstResponseAt ??= now;
+            master.LastResponseFileNumber = response.ResponseFileNumber;
+            master.LastResponseFileName = response.ResponseFileName;
+            master.LastResponseAckNumber = response.AckNumber;
+            master.LastResponseStatus = response.RecordStatus;
+            master.LastResponseCkycReference = response.CkycReferenceNumber;
+            master.LastResponseCkycNumber = response.CkycNumber;
+            master.LastResponseRejectionRemark = response.RejectionRemark;
+            master.LastResponseReadAt = readAt;
+            master.LastResponseRemarks = response.Remarks;
+            master.UpdatedAt = now;
         }
 
-        await using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = localTx;
-            cmd.CommandText = """
-                INSERT INTO master_record_response
-                    (MasterRecordId, CustomerId, BatchFile, ResponseFileNumber, ResponseFileName, LineNumber,
-                     InputRecordLineNumber, AckNumber, RecordStatus, CkycReferenceNumber, CkycNumber, RejectionRemark,
-                     ReadAt, Remarks, RawData, CreatedAt)
-                VALUES
-                    (@mid, @sid, @bf, @rfno, @rfile, @ln, @inln, @ack, @st, @cref, @ckyc, @rej, @read, @rm, @raw, @now)
-                """;
-            cmd.Parameters.Add(NewParam("@mid", response.MasterRecordId));
-            cmd.Parameters.Add(NewParam("@sid", response.CustomerId));
-            cmd.Parameters.Add(NewParam("@bf", response.BatchFile));
-            cmd.Parameters.Add(NewParam("@rfno", response.ResponseFileNumber));
-            cmd.Parameters.Add(NewParam("@rfile", response.ResponseFileName));
-            cmd.Parameters.Add(NewParam("@ln", response.LineNumber));
-            cmd.Parameters.Add(NewParam("@inln", response.InputRecordLineNumber));
-            cmd.Parameters.Add(NewParam("@ack", response.AckNumber));
-            cmd.Parameters.Add(NewParam("@st", response.RecordStatus));
-            cmd.Parameters.Add(NewParam("@cref", response.CkycReferenceNumber));
-            cmd.Parameters.Add(NewParam("@ckyc", response.CkycNumber));
-            cmd.Parameters.Add(NewParam("@rej", response.RejectionRemark));
-            cmd.Parameters.Add(NewParam("@read", readAt.ToString("o")));
-            cmd.Parameters.Add(NewParam("@rm", response.Remarks));
-            cmd.Parameters.Add(NewParam("@raw", response.RawData));
-            cmd.Parameters.Add(NewParam("@now", nowStr));
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
-
-        await using (var u = conn.CreateCommand())
-        {
-            u.Transaction = localTx;
-            u.CommandText = """
-                UPDATE master_record
-                   SET Status=@st, IsResponseRead=1, FirstResponseAt=COALESCE(FirstResponseAt,@now),
-                       LastResponseFileNumber=@rfno, LastResponseFileName=@rfile, LastResponseAckNumber=@ack,
-                       LastResponseStatus=@rst, LastResponseCkycReference=@cref, LastResponseCkycNumber=@ckyc,
-                       LastResponseRejectionRemark=@rej, LastResponseReadAt=@read, LastResponseRemarks=@rm,
-                       UpdatedAt=@now
-                 WHERE Id=@mid AND BatchFile=@bf
-                   AND (LastResponseFileNumber IS NULL OR @rfno >= LastResponseFileNumber)
-                """;
-            u.Parameters.Add(NewParam("@st", (int)MasterRecordStatus.ResponseRead));
-            u.Parameters.Add(NewParam("@rst", response.RecordStatus));
-            u.Parameters.Add(NewParam("@mid", response.MasterRecordId));
-            u.Parameters.Add(NewParam("@bf", response.BatchFile));
-            u.Parameters.Add(NewParam("@now", nowStr));
-            u.Parameters.Add(NewParam("@rfno", response.ResponseFileNumber));
-            u.Parameters.Add(NewParam("@rfile", response.ResponseFileName));
-            u.Parameters.Add(NewParam("@ack", response.AckNumber));
-            u.Parameters.Add(NewParam("@cref", response.CkycReferenceNumber));
-            u.Parameters.Add(NewParam("@ckyc", response.CkycNumber));
-            u.Parameters.Add(NewParam("@rej", response.RejectionRemark));
-            u.Parameters.Add(NewParam("@read", readAt.ToString("o")));
-            u.Parameters.Add(NewParam("@rm", response.Remarks));
-            await u.ExecuteNonQueryAsync(ct);
-        }
-
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         response.CreatedAt = now;
         return response;
@@ -368,89 +413,68 @@ public sealed class MasterRepository : IMasterRepository
 
     public async Task<IReadOnlyList<MasterRecordResponse>> GetResponsesAsync(long masterRecordId, CancellationToken ct = default)
     {
-        var result = new List<MasterRecordResponse>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM master_record_response WHERE MasterRecordId=@m ORDER BY ResponseFileNumber, LineNumber";
-        cmd.Parameters.Add(NewParam("@m", masterRecordId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecordResponses.AsNoTracking()
+            .Where(r => r.MasterRecordId == masterRecordId)
+            .OrderBy(r => r.ResponseFileNumber).ThenBy(r => r.LineNumber)
+            .ToListAsync(ct);
+        return rows.Select(r => new MasterRecordResponse
         {
-            result.Add(new MasterRecordResponse
-            {
-                Id = r.GetInt64(r.GetOrdinal("Id")),
-                MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
-                CustomerId = r["CustomerId"] as string ?? string.Empty,
-                BatchFile = r["BatchFile"] as string,
-                ResponseFileNumber = Convert.ToInt32(r["ResponseFileNumber"]),
-                ResponseFileName = r["ResponseFileName"] as string,
-                LineNumber = Convert.ToInt32(r["LineNumber"]),
-                InputRecordLineNumber = r["InputRecordLineNumber"] is DBNull ? null : Convert.ToInt32(r["InputRecordLineNumber"]),
-                AckNumber = r["AckNumber"] as string,
-                RecordStatus = r["RecordStatus"] as string,
-                CkycReferenceNumber = r["CkycReferenceNumber"] as string,
-                CkycNumber = r["CkycNumber"] as string,
-                RejectionRemark = r["RejectionRemark"] as string,
-                ReadAt = ReadNullableDate(r, "ReadAt"),
-                Remarks = r["Remarks"] as string,
-                RawData = r["RawData"] as string,
-                CreatedAt = ReadDate(r, "CreatedAt"),
-            });
-        }
-        return result;
+            Id = r.Id,
+            MasterRecordId = r.MasterRecordId ?? 0,
+            CustomerId = r.CustomerId ?? string.Empty,
+            BatchFile = r.BatchFile,
+            ResponseFileNumber = r.ResponseFileNumber ?? 0,
+            ResponseFileName = r.ResponseFileName,
+            LineNumber = r.LineNumber ?? 0,
+            InputRecordLineNumber = r.InputRecordLineNumber,
+            AckNumber = r.AckNumber,
+            RecordStatus = r.RecordStatus,
+            CkycReferenceNumber = r.CkycReferenceNumber,
+            CkycNumber = r.CkycNumber,
+            RejectionRemark = r.RejectionRemark,
+            ReadAt = r.ReadAt,
+            Remarks = r.Remarks,
+            RawData = r.RawData,
+            CreatedAt = r.CreatedAt ?? DateTime.MinValue,
+        }).ToList();
     }
 
     public async Task<bool> HasUploadResponseFileAsync(string sourceHash, string responseFileName, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(1) FROM upload_response_file WHERE SourceHash=@hash AND ResponseFileName=@name";
-        cmd.Parameters.Add(NewParam("@hash", sourceHash));
-        cmd.Parameters.Add(NewParam("@name", responseFileName));
-        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)) > 0;
+        await using var db = _db.CreateContext();
+        return await db.UploadResponseFiles
+            .AnyAsync(f => f.SourceHash == sourceHash && f.ResponseFileName == responseFileName, ct);
     }
 
     public async Task<bool> TryAddUploadResponseFileAsync(UploadResponseFile responseFile, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
-
-        await using (var exists = conn.CreateCommand())
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync($"CKYC:upload-response:{responseFile.SourceHash}", ct);
+        var exists = await db.UploadResponseFiles
+            .AnyAsync(f => f.SourceHash == responseFile.SourceHash && f.ResponseFileName == responseFile.ResponseFileName, ct);
+        if (exists)
         {
-            exists.Transaction = localTx;
-            exists.CommandText = "SELECT COUNT(1) FROM upload_response_file WHERE SourceHash=@hash AND ResponseFileName=@name";
-            exists.Parameters.Add(NewParam("@hash", responseFile.SourceHash));
-            exists.Parameters.Add(NewParam("@name", responseFile.ResponseFileName));
-            if (Convert.ToInt32(await exists.ExecuteScalarAsync(ct)) > 0)
-            {
-                await tx.RollbackAsync(ct);
-                return false;
-            }
+            await tx.RollbackAsync(ct);
+            return false;
         }
-
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = localTx;
-        cmd.CommandText = """
-            INSERT INTO upload_response_file
-                (BatchFile, ResponseFileName, ResponseFileNumber, TotalRecords, TotalProcessed,
-                 UnderProcessing, Failed, ResponseTimestamp, RawHeaderData, SourceArchiveName, SourceHash, CreatedAt)
-            VALUES
-                (@batch, @name, @number, @total, @processed, @under, @failed, @timestamp, @raw, @archive, @hash, @now)
-            """;
-        cmd.Parameters.Add(NewParam("@batch", responseFile.BatchFile));
-        cmd.Parameters.Add(NewParam("@name", responseFile.ResponseFileName));
-        cmd.Parameters.Add(NewParam("@number", responseFile.ResponseFileNumber));
-        cmd.Parameters.Add(NewParam("@total", responseFile.TotalRecords));
-        cmd.Parameters.Add(NewParam("@processed", responseFile.TotalProcessed));
-        cmd.Parameters.Add(NewParam("@under", responseFile.UnderProcessing));
-        cmd.Parameters.Add(NewParam("@failed", responseFile.Failed));
-        cmd.Parameters.Add(NewParam("@timestamp", responseFile.ResponseTimestamp));
-        cmd.Parameters.Add(NewParam("@raw", responseFile.RawHeaderData));
-        cmd.Parameters.Add(NewParam("@archive", responseFile.SourceArchiveName));
-        cmd.Parameters.Add(NewParam("@hash", responseFile.SourceHash));
-        cmd.Parameters.Add(NewParam("@now", DateTime.UtcNow.ToString("o")));
-        await cmd.ExecuteNonQueryAsync(ct);
+        db.UploadResponseFiles.Add(new UploadResponseFileEntity
+        {
+            BatchFile = responseFile.BatchFile,
+            ResponseFileName = responseFile.ResponseFileName,
+            ResponseFileNumber = responseFile.ResponseFileNumber,
+            TotalRecords = responseFile.TotalRecords,
+            TotalProcessed = responseFile.TotalProcessed,
+            UnderProcessing = responseFile.UnderProcessing,
+            Failed = responseFile.Failed,
+            ResponseTimestamp = responseFile.ResponseTimestamp,
+            RawHeaderData = responseFile.RawHeaderData,
+            SourceArchiveName = responseFile.SourceArchiveName,
+            SourceHash = responseFile.SourceHash,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return true;
     }
@@ -459,350 +483,139 @@ public sealed class MasterRepository : IMasterRepository
     {
         var now = DateTime.UtcNow;
         var attemptedAt = attempt.AttemptedAt ?? now;
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync($"CKYC:master-attempt:{attempt.MasterRecordId}", ct);
 
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        // Compute the attempt number in the same statement instead of a separate COUNT-based
-        // round-trip. This removes a connection + a widening COUNT(*) per attempt and avoids
-        // the race where two concurrent attempts could observe the same count and both insert
-        // the same Attempt number.
-        cmd.CommandText = """
-            INSERT INTO master_record_attempt
-                (MasterRecordId, CustomerId, Stage, ActivityTypeId, Attempt, Status, Success, Error, Remarks, AttemptedAt, NextRetryAt, CreatedAt)
-            SELECT @mid, @sid, @stage, @atid,
-                   (SELECT COUNT(*) + 1 FROM master_record_attempt WHERE MasterRecordId=@mid AND Stage=@stage),
-                   @st, @ok, @err, @rm, @at, @next, @now
-            """;
-        cmd.Parameters.Add(NewParam("@mid", attempt.MasterRecordId));
-        cmd.Parameters.Add(NewParam("@sid", attempt.CustomerId));
-        cmd.Parameters.Add(NewParam("@stage", attempt.Stage));
-        cmd.Parameters.Add(NewParam("@atid", attempt.ActivityTypeId));
-        cmd.Parameters.Add(NewParam("@st", attempt.Status));
-        cmd.Parameters.Add(NewParam("@ok", attempt.Success ? 1 : 0));
-        cmd.Parameters.Add(NewParam("@err", attempt.Error));
-        cmd.Parameters.Add(NewParam("@rm", attempt.Remarks));
-        cmd.Parameters.Add(NewParam("@at", attemptedAt.ToString("o")));
-        cmd.Parameters.Add(NewParam("@next", attempt.NextRetryAt is { } n ? n.ToString("o") : null));
-        cmd.Parameters.Add(NewParam("@now", now.ToString("o")));
-        return await cmd.ExecuteNonQueryAsync(ct);
-    }
+        var next = await db.MasterRecordAttempts
+            .Where(a => a.MasterRecordId == attempt.MasterRecordId && a.Stage == attempt.Stage)
+            .CountAsync(ct) + 1;
 
-    public async Task<bool> RecordRetryAsync(long id, int retryCount, string? lastError, string? lastActivity,
-        DateTime? nextRetryAt, bool needsReconcile, CancellationToken ct)
-    {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE master_record
-               SET RetryCount=@count, LastError=@err, LastActivity=@activity,
-                   LastAttemptAt=@attempt, NextRetryAt=@next, NeedsReconcile=@needs, UpdatedAt=@upd
-             WHERE Id=@id
-            """;
-        cmd.Parameters.Add(NewParam("@count", retryCount));
-        cmd.Parameters.Add(NewParam("@err", lastError));
-        cmd.Parameters.Add(NewParam("@activity", lastActivity));
-        cmd.Parameters.Add(NewParam("@attempt", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@next", nextRetryAt is { } n ? n.ToString("o") : null));
-        cmd.Parameters.Add(NewParam("@needs", needsReconcile ? 1 : 0));
-        cmd.Parameters.Add(NewParam("@upd", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
-
-    public async Task<bool> MarkNeedsReconcileAsync(long id, string reason, CancellationToken ct)
-    {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE master_record
-               SET NeedsReconcile=1, ReconStatus=@status, ReconRemarks=@remarks, UpdatedAt=@upd
-             WHERE Id=@id
-            """;
-        cmd.Parameters.Add(NewParam("@status", "NeedsIntervention"));
-        cmd.Parameters.Add(NewParam("@remarks", reason));
-        cmd.Parameters.Add(NewParam("@upd", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
-
-    public async Task<bool> ClearRetryStateAsync(long id, CancellationToken ct)
-    {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE master_record
-               SET RetryCount=0, LastError=NULL, LastActivity=NULL, NextRetryAt=NULL,
-                   NeedsReconcile=0, UpdatedAt=@upd
-             WHERE Id=@id
-            """;
-        cmd.Parameters.Add(NewParam("@upd", DateTime.UtcNow.ToString("o")));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
-
-    public async Task<IReadOnlyList<MasterRecord>> GetRetryableForActivityAsync(string activityCode, int maxAttempts,
-        DateTime now, int limit, CancellationToken ct)
-        => await QueryAsync(
-            """
-            SELECT * FROM master_record
-             WHERE Status=@failed AND RetryCount < @max AND LastActivity=@activity
-               AND (NextRetryAt IS NULL OR NextRetryAt <= @now)
-             ORDER BY Id LIMIT @n
-            """,
-            c =>
-            {
-                c.Parameters.Add(NewParam("@failed", (int)MasterRecordStatus.Failed));
-                c.Parameters.Add(NewParam("@max", maxAttempts));
-                c.Parameters.Add(NewParam("@activity", activityCode));
-                c.Parameters.Add(NewParam("@now", now.ToString("o")));
-                c.Parameters.Add(NewParam("@n", limit));
-            }, ct);
-
-    public async Task<IReadOnlyList<MasterRecord>> GetNeedsReconcileAsync(string? kind, int limit, CancellationToken ct)
-    {
-        var sql = kind switch
+        db.MasterRecordAttempts.Add(new MasterRecordAttemptEntity
         {
-            "retry" => """
-                SELECT * FROM master_record
-                 WHERE NeedsReconcile=1 AND (Status=@failed OR Status=@rejected)
-                 ORDER BY Id LIMIT @n
-                """,
-            "cersai" => """
-                SELECT * FROM master_record
-                 WHERE Status=@rejected OR IsRejected=1 OR Status=@fvufailed
-                 ORDER BY Id LIMIT @n
-                """,
-            _ => """
-                SELECT * FROM master_record
-                 WHERE NeedsReconcile=1 OR Status=@rejected OR IsRejected=1 OR Status=@fvufailed
-                 ORDER BY Id LIMIT @n
-                """,
-        };
-        return await QueryAsync(sql, c =>
-        {
-            c.Parameters.Add(NewParam("@failed", (int)MasterRecordStatus.Failed));
-            c.Parameters.Add(NewParam("@rejected", (int)MasterRecordStatus.Rejected));
-            c.Parameters.Add(NewParam("@fvufailed", (int)MasterRecordStatus.FvuFailed));
-            c.Parameters.Add(NewParam("@n", limit));
-        }, ct);
+            MasterRecordId = attempt.MasterRecordId,
+            CustomerId = attempt.CustomerId,
+            Stage = attempt.Stage,
+            ActivityTypeId = attempt.ActivityTypeId,
+            Attempt = next,
+            Status = attempt.Status,
+            Success = attempt.Success ? 1 : 0,
+            Error = attempt.Error,
+            Remarks = attempt.Remarks,
+            AttemptedAt = attemptedAt,
+            NextRetryAt = attempt.NextRetryAt,
+            CreatedAt = now,
+        });
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return 1;
     }
 
     public async Task<IReadOnlyList<ActivityType>> GetActivityTypesAsync(CancellationToken ct)
     {
-        var result = new List<ActivityType>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM activity_type ORDER BY Id";
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            result.Add(ReadActivityType(r));
-        return result;
+        await using var db = _db.CreateContext();
+        var rows = await db.ActivityTypes.AsNoTracking().OrderBy(a => a.Id).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
     }
 
     public async Task<ActivityType?> GetActivityTypeByCodeAsync(string code, CancellationToken ct)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM activity_type WHERE Code=@c";
-        cmd.Parameters.Add(NewParam("@c", code));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? ReadActivityType(r) : null;
+        await using var db = _db.CreateContext();
+        var row = await db.ActivityTypes.AsNoTracking().SingleOrDefaultAsync(a => a.Code == code, ct);
+        return row is null ? null : ToDomain(row);
     }
 
     public async Task<IReadOnlyList<StatusMaster>> GetStatusMastersAsync(CancellationToken ct)
     {
-        var result = new List<StatusMaster>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM status_master ORDER BY StatusValue";
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-            result.Add(ReadStatusMaster(r));
-        return result;
+        await using var db = _db.CreateContext();
+        var rows = await db.StatusMasters.AsNoTracking().OrderBy(s => s.StatusValue).ToListAsync(ct);
+        return rows.Select(ToDomain).ToList();
     }
 
     public async Task<StatusMaster?> GetStatusMasterByValueAsync(int statusValue, CancellationToken ct)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM status_master WHERE StatusValue=@v";
-        cmd.Parameters.Add(NewParam("@v", statusValue));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? ReadStatusMaster(r) : null;
+        await using var db = _db.CreateContext();
+        var row = await db.StatusMasters.AsNoTracking().SingleOrDefaultAsync(s => s.StatusValue == statusValue, ct);
+        return row is null ? null : ToDomain(row);
     }
 
     public async Task<MasterRecordReattempt> LogReattemptAsync(MasterRecordReattempt reattempt, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var reattemptedAt = reattempt.ReattemptedAt ?? now;
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO master_record_reattempt
-                (MasterRecordId, CustomerId, Reason, PreviousStatus, PreviousReconStatus,
-                 PreviousResponseStatus, PreviousResponseAckNumber, PreviousResponseCkycReference,
-                 PreviousResponseCkycNumber, PreviousResponseRejectionRemark, PreviousResponseReadAt,
-                 PreviousRetryCount, ReattemptCount, ReattemptedAt, CreatedAt)
-            VALUES
-                (@mid, @sid, @reason, @pstatus, @precon, @prstatus, @pack, @pcref, @pckyc,
-                 @prej, @pread, @pretry, @rcount, @rat, @now)
-            """;
-        cmd.Parameters.Add(NewParam("@mid", reattempt.MasterRecordId));
-        cmd.Parameters.Add(NewParam("@sid", reattempt.CustomerId));
-        cmd.Parameters.Add(NewParam("@reason", reattempt.Reason));
-        cmd.Parameters.Add(NewParam("@pstatus", reattempt.PreviousStatus));
-        cmd.Parameters.Add(NewParam("@precon", reattempt.PreviousReconStatus));
-        cmd.Parameters.Add(NewParam("@prstatus", reattempt.PreviousResponseStatus));
-        cmd.Parameters.Add(NewParam("@pack", reattempt.PreviousResponseAckNumber));
-        cmd.Parameters.Add(NewParam("@pcref", reattempt.PreviousResponseCkycReference));
-        cmd.Parameters.Add(NewParam("@pckyc", reattempt.PreviousResponseCkycNumber));
-        cmd.Parameters.Add(NewParam("@prej", reattempt.PreviousResponseRejectionRemark));
-        cmd.Parameters.Add(NewParam("@pread", reattempt.PreviousResponseReadAt is { } d ? d.ToString("o") : null));
-        cmd.Parameters.Add(NewParam("@pretry", reattempt.PreviousRetryCount));
-        cmd.Parameters.Add(NewParam("@rcount", reattempt.ReattemptCount));
-        cmd.Parameters.Add(NewParam("@rat", reattemptedAt.ToString("o")));
-        cmd.Parameters.Add(NewParam("@now", now.ToString("o")));
-        await cmd.ExecuteNonQueryAsync(ct);
+        await using var db = _db.CreateContext();
+        db.MasterRecordReattempts.Add(new MasterRecordReattemptEntity
+        {
+            MasterRecordId = reattempt.MasterRecordId,
+            CustomerId = reattempt.CustomerId,
+            Reason = reattempt.Reason,
+            PreviousStatus = reattempt.PreviousStatus,
+            PreviousReconStatus = reattempt.PreviousReconStatus,
+            PreviousResponseStatus = reattempt.PreviousResponseStatus,
+            PreviousResponseAckNumber = reattempt.PreviousResponseAckNumber,
+            PreviousResponseCkycReference = reattempt.PreviousResponseCkycReference,
+            PreviousResponseCkycNumber = reattempt.PreviousResponseCkycNumber,
+            PreviousResponseRejectionRemark = reattempt.PreviousResponseRejectionRemark,
+            PreviousResponseReadAt = reattempt.PreviousResponseReadAt,
+            PreviousRetryCount = reattempt.PreviousRetryCount,
+            ReattemptCount = reattempt.ReattemptCount,
+            ReattemptedAt = reattemptedAt,
+            CreatedAt = now,
+        });
+        await db.SaveChangesAsync(ct);
         reattempt.CreatedAt = now;
         return reattempt;
     }
 
     public async Task<IReadOnlyList<MasterRecordReattempt>> GetReattemptsAsync(long masterRecordId, CancellationToken ct)
     {
-        var result = new List<MasterRecordReattempt>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT * FROM master_record_reattempt WHERE MasterRecordId=@m ORDER BY Id";
-        cmd.Parameters.Add(NewParam("@m", masterRecordId));
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        await using var db = _db.CreateContext();
+        var rows = await db.MasterRecordReattempts.AsNoTracking()
+            .Where(r => r.MasterRecordId == masterRecordId)
+            .OrderBy(r => r.Id).ToListAsync(ct);
+        return rows.Select(r => new MasterRecordReattempt
         {
-            result.Add(new MasterRecordReattempt
-            {
-                Id = r.GetInt64(r.GetOrdinal("Id")),
-                MasterRecordId = Convert.ToInt64(r["MasterRecordId"]),
-                CustomerId = r["CustomerId"] as string ?? string.Empty,
-                Reason = r["Reason"] as string,
-                PreviousStatus = r["PreviousStatus"] is DBNull ? null : Convert.ToInt32(r["PreviousStatus"]),
-                PreviousReconStatus = r["PreviousReconStatus"] as string,
-                PreviousResponseStatus = r["PreviousResponseStatus"] as string,
-                PreviousResponseAckNumber = r["PreviousResponseAckNumber"] as string,
-                PreviousResponseCkycReference = r["PreviousResponseCkycReference"] as string,
-                PreviousResponseCkycNumber = r["PreviousResponseCkycNumber"] as string,
-                PreviousResponseRejectionRemark = r["PreviousResponseRejectionRemark"] as string,
-                PreviousResponseReadAt = ReadNullableDate(r, "PreviousResponseReadAt"),
-                PreviousRetryCount = r["PreviousRetryCount"] is DBNull ? null : Convert.ToInt32(r["PreviousRetryCount"]),
-                ReattemptCount = Convert.ToInt32(r["ReattemptCount"]),
-                ReattemptedAt = ReadNullableDate(r, "ReattemptedAt"),
-                CreatedAt = ReadDate(r, "CreatedAt"),
-            });
-        }
-        return result;
+            Id = r.Id,
+            MasterRecordId = r.MasterRecordId ?? 0,
+            CustomerId = r.CustomerId ?? string.Empty,
+            Reason = r.Reason,
+            PreviousStatus = r.PreviousStatus,
+            PreviousReconStatus = r.PreviousReconStatus,
+            PreviousResponseStatus = r.PreviousResponseStatus,
+            PreviousResponseAckNumber = r.PreviousResponseAckNumber,
+            PreviousResponseCkycReference = r.PreviousResponseCkycReference,
+            PreviousResponseCkycNumber = r.PreviousResponseCkycNumber,
+            PreviousResponseRejectionRemark = r.PreviousResponseRejectionRemark,
+            PreviousResponseReadAt = r.PreviousResponseReadAt,
+            PreviousRetryCount = r.PreviousRetryCount,
+            ReattemptCount = r.ReattemptCount ?? 0,
+            ReattemptedAt = r.ReattemptedAt,
+            CreatedAt = r.CreatedAt ?? DateTime.MinValue,
+        }).ToList();
     }
 
     public async Task<bool> ResetForReattemptAsync(long id, string remarks, CancellationToken ct)
     {
-        var now = DateTime.UtcNow.ToString("o");
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE master_record
-               SET Status=@saved, IsRejected=0, IsUploaded=0, RetryCount=0, LastError=NULL,
-                   LastActivity=NULL, NextRetryAt=NULL, NeedsReconcile=0,
-                   ReattemptCount=ReattemptCount+1, ReattemptedAt=@rat, Remarks=@remarks, UpdatedAt=@upd
-             WHERE Id=@id
-            """;
-        cmd.Parameters.Add(NewParam("@saved", (int)MasterRecordStatus.Saved));
-        cmd.Parameters.Add(NewParam("@rat", now));
-        cmd.Parameters.Add(NewParam("@remarks", remarks));
-        cmd.Parameters.Add(NewParam("@upd", now));
-        cmd.Parameters.Add(NewParam("@id", id));
-        return await cmd.ExecuteNonQueryAsync(ct) > 0;
-    }
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        var row = await db.MasterRecords.SingleOrDefaultAsync(m => m.Id == id, ct);
+        if (row is null) return false;
 
-    private static ActivityType ReadActivityType(DbDataReader r) => new()
-    {
-        Id = r.GetInt64(r.GetOrdinal("Id")),
-        Code = r["Code"] as string ?? string.Empty,
-        Name = r["Name"] as string ?? string.Empty,
-        IsRetryable = ReadBool(r, "IsRetryable"),
-        MaxAttempts = Convert.ToInt32(r["MaxAttempts"]),
-        BackoffBaseHours = Convert.ToInt32(r["BackoffBaseHours"]),
-        BackoffMultiplier = Convert.ToDouble(r["BackoffMultiplier"]),
-        IsActive = ReadBool(r, "IsActive"),
-        Remarks = r["Remarks"] as string,
-        CreatedAt = ReadDate(r, "CreatedAt"),
-    };
-
-    private static StatusMaster ReadStatusMaster(DbDataReader r) => new()
-    {
-        Id = r.GetInt64(r.GetOrdinal("Id")),
-        StatusValue = Convert.ToInt32(r["StatusValue"]),
-        Code = r["Code"] as string ?? string.Empty,
-        Name = r["Name"] as string ?? string.Empty,
-        Description = r["Description"] as string,
-        IsTerminal = ReadBool(r, "IsTerminal"),
-        IsActive = ReadBool(r, "IsActive"),
-        CreatedAt = ReadDate(r, "CreatedAt"),
-    };
-
-    private async Task<IReadOnlyList<MasterRecord>> QueryAsync(string sql, Action<DbCommand> configure, CancellationToken ct)
-    {
-        var result = new List<MasterRecord>();
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        configure(cmd);
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
-        {
-            result.Add(new MasterRecord
-            {
-                Id = r.GetInt64(r.GetOrdinal("Id")),
-                CustomerId = r["CustomerId"] as string ?? string.Empty,
-                ClientType = r["ClientType"] as string ?? "I",
-                BusinessDate = ReadDate(r, "BusinessDate"),
-                Status = (MasterRecordStatus)Convert.ToInt32(r["Status"]),
-                Remarks = r["Remarks"] as string,
-                RetryCount = Convert.ToInt32(r["RetryCount"]),
-                LastError = r["LastError"] as string,
-                LastAttemptAt = ReadNullableDate(r, "LastAttemptAt"),
-                LastActivity = r["LastActivity"] as string,
-                NextRetryAt = ReadNullableDate(r, "NextRetryAt"),
-                NeedsReconcile = ReadBool(r, "NeedsReconcile"),
-                ReattemptCount = r["ReattemptCount"] is DBNull ? 0 : Convert.ToInt32(r["ReattemptCount"]),
-                ReattemptedAt = ReadNullableDate(r, "ReattemptedAt"),
-                BatchFile = r["BatchFile"] as string,
-                BatchRecordLine = r["BatchRecordLine"] is DBNull ? null : Convert.ToInt32(r["BatchRecordLine"]),
-                IsCrmFetched = ReadBool(r, "IsCrmFetched"),
-                IsSaved = ReadBool(r, "IsSaved"),
-                IsBatched = ReadBool(r, "IsBatched"),
-                IsUploaded = ReadBool(r, "IsUploaded"),
-                IsResponseRead = ReadBool(r, "IsResponseRead"),
-                IsReconciled = ReadBool(r, "IsReconciled"),
-                IsRejected = ReadBool(r, "IsRejected"),
-                CrmFetchedAt = ReadNullableDate(r, "CrmFetchedAt"),
-                SavedAt = ReadNullableDate(r, "SavedAt"),
-                BatchedAt = ReadNullableDate(r, "BatchedAt"),
-                UploadedAt = ReadNullableDate(r, "UploadedAt"),
-                FirstResponseAt = ReadNullableDate(r, "FirstResponseAt"),
-                ReconciledAt = ReadNullableDate(r, "ReconciledAt"),
-                LastResponseFileNumber = r["LastResponseFileNumber"] is DBNull ? null : Convert.ToInt32(r["LastResponseFileNumber"]),
-                LastResponseFileName = r["LastResponseFileName"] as string,
-                LastResponseAckNumber = r["LastResponseAckNumber"] as string,
-                LastResponseStatus = r["LastResponseStatus"] as string,
-                LastResponseCkycReference = r["LastResponseCkycReference"] as string,
-                LastResponseCkycNumber = r["LastResponseCkycNumber"] as string,
-                LastResponseRejectionRemark = r["LastResponseRejectionRemark"] as string,
-                LastResponseReadAt = ReadNullableDate(r, "LastResponseReadAt"),
-                LastResponseRemarks = r["LastResponseRemarks"] as string,
-                ReconStatus = r["ReconStatus"] as string,
-                ReconRemarks = r["ReconRemarks"] as string,
-                CreatedAt = ReadDate(r, "CreatedAt"),
-                UpdatedAt = ReadDate(r, "UpdatedAt"),
-            });
-        }
-        return result;
+        row.Status = (int)MasterRecordStatus.Saved;
+        row.StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Saved);
+        row.IsRejected = 0;
+        row.IsUploaded = 0;
+        row.RetryCount = 0;
+        row.LastError = null;
+        row.LastActivity = null;
+        row.NextRetryAt = null;
+        row.NeedsReconcile = 0;
+        row.ReattemptCount = (row.ReattemptCount ?? 0) + 1;
+        row.ReattemptedAt = now;
+        row.Remarks = remarks;
+        row.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     private static (string? Flag, string? Timestamp) StageFor(MasterRecordStatus status) => status switch
@@ -817,24 +630,76 @@ public sealed class MasterRepository : IMasterRepository
         _ => (null, null),
     };
 
-    private static bool ReadBool(DbDataReader r, string col)
-        => r[col] is not DBNull && Convert.ToInt32(r[col]) != 0;
-
-    private static DateTime ReadDate(DbDataReader r, string col)
+    private static MasterRecord ToDomain(MasterRecordEntity r) => new()
     {
-        var v = r[col] as string;
-        return DateTime.TryParse(v, out var d) ? d : DateTime.MinValue;
-    }
+        Id = r.Id,
+        CustomerId = r.CustomerId ?? string.Empty,
+        ClientType = r.ClientType ?? "I",
+        BusinessDate = r.BusinessDate?.ToDateTime(TimeOnly.MinValue) ?? DateTime.MinValue,
+        Status = (MasterRecordStatus)(r.Status ?? 0),
+        StatusCode = r.StatusCode ?? MasterRecordStatusCode.Pending,
+        Remarks = r.Remarks,
+        RetryCount = r.RetryCount,
+        LastError = r.LastError,
+        LastAttemptAt = r.LastAttemptAt,
+        LastActivity = r.LastActivity,
+        NextRetryAt = r.NextRetryAt,
+        NeedsReconcile = r.NeedsReconcile == 1,
+        ReattemptCount = r.ReattemptCount ?? 0,
+        ReattemptedAt = r.ReattemptedAt,
+        BatchFile = r.BatchFile,
+        BatchRecordLine = r.BatchRecordLine,
+        IsCrmFetched = r.IsCrmFetched == 1,
+        IsSaved = r.IsSaved == 1,
+        IsBatched = r.IsBatched == 1,
+        IsUploaded = r.IsUploaded == 1,
+        IsResponseRead = r.IsResponseRead == 1,
+        IsReconciled = r.IsReconciled == 1,
+        IsRejected = r.IsRejected == 1,
+        CrmFetchedAt = r.CrmFetchedAt,
+        SavedAt = r.SavedAt,
+        BatchedAt = r.BatchedAt,
+        UploadedAt = r.UploadedAt,
+        FirstResponseAt = r.FirstResponseAt,
+        ReconciledAt = r.ReconciledAt,
+        LastResponseFileNumber = r.LastResponseFileNumber,
+        LastResponseFileName = r.LastResponseFileName,
+        LastResponseAckNumber = r.LastResponseAckNumber,
+        LastResponseStatus = r.LastResponseStatus,
+        LastResponseCkycReference = r.LastResponseCkycReference,
+        LastResponseCkycNumber = r.LastResponseCkycNumber,
+        LastResponseRejectionRemark = r.LastResponseRejectionRemark,
+        LastResponseReadAt = r.LastResponseReadAt,
+        LastResponseRemarks = r.LastResponseRemarks,
+        ReconStatus = r.ReconStatus,
+        ReconRemarks = r.ReconRemarks,
+        CreatedAt = r.CreatedAt ?? DateTime.MinValue,
+        UpdatedAt = r.UpdatedAt ?? DateTime.MinValue,
+    };
 
-    private static DateTime? ReadNullableDate(DbDataReader r, string col)
+    private static ActivityType ToDomain(ActivityTypeEntity a) => new()
     {
-        var v = r[col] as string;
-        return DateTime.TryParse(v, out var d) ? d : null;
-    }
+        Id = a.Id,
+        Code = a.Code ?? string.Empty,
+        Name = a.Name ?? string.Empty,
+        IsRetryable = a.IsRetryable == 1,
+        MaxAttempts = a.MaxAttempts ?? 3,
+        BackoffBaseHours = a.BackoffBaseHours ?? 24,
+        BackoffMultiplier = a.BackoffMultiplier ?? 2.0,
+        IsActive = a.IsActive == 1,
+        Remarks = a.Remarks,
+        CreatedAt = a.CreatedAt ?? DateTime.MinValue,
+    };
 
-    internal static DbParameter NewParam(string name, object? value)
+    private static StatusMaster ToDomain(StatusMasterEntity s) => new()
     {
-        var p = new Microsoft.Data.Sqlite.SqliteParameter(name, value ?? DBNull.Value);
-        return p;
-    }
+        Id = s.Id,
+        StatusValue = s.StatusValue ?? 0,
+        Code = s.Code ?? string.Empty,
+        Name = s.Name ?? string.Empty,
+        Description = s.Description,
+        IsTerminal = s.IsTerminal == 1,
+        IsActive = s.IsActive == 1,
+        CreatedAt = s.CreatedAt ?? DateTime.MinValue,
+    };
 }

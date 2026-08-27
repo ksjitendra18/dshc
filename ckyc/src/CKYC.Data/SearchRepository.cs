@@ -1,10 +1,14 @@
-using System.Data.Common;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
+using Microsoft.EntityFrameworkCore;
+using SearchBatchEntity = CKYC.Data.Entities.SearchBatch;
+using SearchRequestEntity = CKYC.Data.Entities.SearchRequest;
+using SearchResponseEntity = CKYC.Data.Entities.SearchResponse;
+using SearchResponseFileEntity = CKYC.Data.Entities.SearchResponseFile;
 
 namespace CKYC.Data;
 
-/// <summary>Persists search requests and claims batches transactionally.</summary>
+/// <summary>Persists search requests and claims batches transactionally (EF Core / SQL Server).</summary>
 public sealed class SearchRepository : ISearchRepository
 {
     private readonly ICkycDatabase _db;
@@ -14,53 +18,40 @@ public sealed class SearchRepository : ISearchRepository
     public async Task<SearchIngestResult> InsertAsync(IReadOnlyList<SearchRequest> requests, CancellationToken ct = default)
     {
         if (requests.Count == 0) return new SearchIngestResult(0, 0);
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var now = DateTime.UtcNow.ToString("o");
-        var inserted = 0;
+        await using var db = _db.CreateContext();
+        var now = DateTime.UtcNow;
         foreach (var request in requests)
         {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = (DbTransaction)tx;
-            cmd.CommandText = """
-                INSERT INTO search_request
-                    (ExternalRequestId, CustomerId, ClientType, SearchOption,
-                     IdentityTypeAndNumber, FirstName, MiddleName, LastName, DateOfBirth,
-                     LegalEntityName, DateOfIncorporation, Gender, PhotoReferenceNumber,
-                     Relation, RelationFirstName, RelationMiddleName, RelationLastName,
-                     MobileNumber, VerifiableCredential, Constitution, RawRequestJson,
-                     ProcessingStatus, CreatedAt, UpdatedAt)
-                VALUES
-                    (@external, @customer, @client, @option, @identity, @first, @middle,
-                     @last, @dob, @legal, @doi, @gender, @photo, @relation, @rfirst,
-                     @rmiddle, @rlast, @mobile, @credential, @constitution, @raw, 0, @now, @now)
-                """;
-            Add(cmd, "@external", request.ExternalRequestId);
-            Add(cmd, "@customer", request.CustomerId);
-            Add(cmd, "@client", request.ClientType);
-            Add(cmd, "@option", request.SearchOption);
-            Add(cmd, "@identity", request.IdentityTypeAndNumber);
-            Add(cmd, "@first", request.FirstName);
-            Add(cmd, "@middle", request.MiddleName);
-            Add(cmd, "@last", request.LastName);
-            Add(cmd, "@dob", request.DateOfBirth);
-            Add(cmd, "@legal", request.LegalEntityName);
-            Add(cmd, "@doi", request.DateOfIncorporation);
-            Add(cmd, "@gender", request.Gender);
-            Add(cmd, "@photo", request.PhotoReferenceNumber);
-            Add(cmd, "@relation", request.Relation);
-            Add(cmd, "@rfirst", request.RelationFirstName);
-            Add(cmd, "@rmiddle", request.RelationMiddleName);
-            Add(cmd, "@rlast", request.RelationLastName);
-            Add(cmd, "@mobile", request.MobileNumber);
-            Add(cmd, "@credential", request.VerifiableCredential);
-            Add(cmd, "@constitution", request.Constitution);
-            Add(cmd, "@raw", request.RawRequestJson);
-            Add(cmd, "@now", now);
-            inserted += await cmd.ExecuteNonQueryAsync(ct);
+            db.SearchRequests.Add(new SearchRequestEntity
+            {
+                ExternalRequestId = request.ExternalRequestId,
+                CustomerId = request.CustomerId,
+                ClientType = request.ClientType,
+                SearchOption = request.SearchOption,
+                IdentityTypeAndNumber = request.IdentityTypeAndNumber,
+                FirstName = request.FirstName,
+                MiddleName = request.MiddleName,
+                LastName = request.LastName,
+                DateOfBirth = request.DateOfBirth,
+                LegalEntityName = request.LegalEntityName,
+                DateOfIncorporation = request.DateOfIncorporation,
+                Gender = request.Gender,
+                PhotoReferenceNumber = request.PhotoReferenceNumber,
+                Relation = request.Relation,
+                RelationFirstName = request.RelationFirstName,
+                RelationMiddleName = request.RelationMiddleName,
+                RelationLastName = request.RelationLastName,
+                MobileNumber = request.MobileNumber,
+                VerifiableCredential = request.VerifiableCredential,
+                Constitution = request.Constitution,
+                RawRequestJson = request.RawRequestJson,
+                ProcessingStatus = 0,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
         }
-        await tx.CommitAsync(ct);
-        return new SearchIngestResult(inserted, requests.Count);
+        await db.SaveChangesAsync(ct);
+        return new SearchIngestResult(requests.Count, requests.Count);
     }
 
     public async Task<SearchClaim?> ClaimAsync(int limit, DateOnly businessDate, int sequenceStart,
@@ -69,309 +60,288 @@ public sealed class SearchRepository : ISearchRepository
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         var token = Guid.NewGuid().ToString("D");
         var now = DateTime.UtcNow;
-        var staleBefore = now.Subtract(claimTimeout).ToString("o");
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        var staleBefore = now.Subtract(claimTimeout);
 
-        await using (var claim = conn.CreateCommand())
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync("CKYC:search-claim", ct);
+
+        // The transaction-scoped SQL Server application lock serializes the short claim and
+        // daily-sequence allocation window across processes.
+        var claimIds = await db.SearchRequests
+            .Where(r => r.ProcessingStatus == 0 || (r.ProcessingStatus == 1 && r.ClaimedAt < staleBefore))
+            .OrderBy(r => r.Id).Take(limit)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+        if (claimIds.Count == 0)
         {
-            claim.Transaction = (DbTransaction)tx;
-            claim.CommandText = """
-                UPDATE search_request
-                   SET ProcessingStatus=1, ClaimToken=@token, ClaimedAt=@now,
-                       LastError=NULL, UpdatedAt=@now
-                 WHERE Id IN (
-                    SELECT Id FROM search_request
-                     WHERE ProcessingStatus=0
-                        OR (ProcessingStatus=1 AND ClaimedAt < @stale)
-                     ORDER BY Id LIMIT @limit
-                 )
-                """;
-            Add(claim, "@token", token);
-            Add(claim, "@now", now.ToString("o"));
-            Add(claim, "@stale", staleBefore);
-            Add(claim, "@limit", limit);
-            if (await claim.ExecuteNonQueryAsync(ct) == 0)
-            {
-                await tx.RollbackAsync(ct);
-                return null;
-            }
+            await tx.RollbackAsync(ct);
+            return null;
         }
 
-        var date = businessDate.ToString("yyyy-MM-dd");
+        await db.SearchRequests
+            .Where(r => claimIds.Contains(r.Id))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.ProcessingStatus, 1)
+                .SetProperty(r => r.ClaimToken, token)
+                .SetProperty(r => r.ClaimedAt, now)
+                .SetProperty(r => r.LastError, (string?)null)
+                .SetProperty(r => r.UpdatedAt, now), ct);
+
         var sequence = sequenceStart;
-        await using (var seq = conn.CreateCommand())
-        {
-            seq.Transaction = (DbTransaction)tx;
-            seq.CommandText = "SELECT MAX(FileSequence) FROM search_batch WHERE BusinessDate=@date";
-            Add(seq, "@date", date);
-            var value = await seq.ExecuteScalarAsync(ct);
-            if (value is not null && value is not DBNull) sequence = Math.Max(sequenceStart, Convert.ToInt32(value) + 1);
-        }
+        var maxSequence = await db.SearchBatches
+            .Where(b => b.BusinessDate == businessDate)
+            .MaxAsync(b => (int?)b.FileSequence, ct);
+        if (maxSequence is not null) sequence = Math.Max(sequenceStart, maxSequence.Value + 1);
 
-        var records = await ReadClaimAsync(conn, (DbTransaction)tx, token, ct);
-        await using (var batch = conn.CreateCommand())
+        var records = await ReadClaimAsync(db, token, ct);
+        db.SearchBatches.Add(new SearchBatchEntity
         {
-            batch.Transaction = (DbTransaction)tx;
-            batch.CommandText = """
-                INSERT INTO search_batch
-                    (BusinessDate, FileSequence, ClaimToken, RecordCount, Status, CreatedAt)
-                VALUES (@date, @sequence, @token, @count, 1, @now)
-                """;
-            Add(batch, "@date", date);
-            Add(batch, "@sequence", sequence);
-            Add(batch, "@token", token);
-            Add(batch, "@count", records.Count);
-            Add(batch, "@now", now.ToString("o"));
-            await batch.ExecuteNonQueryAsync(ct);
-        }
+            BusinessDate = businessDate,
+            FileSequence = sequence,
+            ClaimToken = token,
+            RecordCount = records.Count,
+            Status = 1,
+            CreatedAt = now,
+        });
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new SearchClaim(token, sequence, records);
     }
 
     public async Task CompleteAsync(SearchClaim claim, string fileName, string filePath, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var now = DateTime.UtcNow.ToString("o");
-        for (var index = 0; index < claim.Records.Count; index++)
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var now = DateTime.UtcNow;
+        var lineById = claim.Records.Select((record, index) => (record.Id, Line: index + 1))
+            .ToDictionary(item => item.Id, item => item.Line);
+        var claimIds = lineById.Keys.ToList();
+        var requests = await db.SearchRequests
+            .Where(r => claimIds.Contains(r.Id) && r.ClaimToken == claim.Token && r.ProcessingStatus == 1)
+            .ToListAsync(ct);
+        foreach (var request in requests)
         {
-            var record = claim.Records[index];
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = (DbTransaction)tx;
-            cmd.CommandText = """
-                UPDATE search_request
-                   SET ProcessingStatus=2, ProcessedAt=@now, OutputFileName=@file,
-                       OutputLineNumber=@line,
-                       UpdatedAt=@now
-                 WHERE Id=@id AND ClaimToken=@token AND ProcessingStatus=1
-                """;
-            Add(cmd, "@now", now); Add(cmd, "@file", fileName); Add(cmd, "@line", index + 1);
-            Add(cmd, "@id", record.Id); Add(cmd, "@token", claim.Token);
-            await cmd.ExecuteNonQueryAsync(ct);
+            request.ProcessingStatus = 2;
+            request.ProcessedAt = now;
+            request.OutputFileName = fileName;
+            request.OutputLineNumber = lineById[request.Id];
+            request.UpdatedAt = now;
         }
-        await using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = (DbTransaction)tx;
-            cmd.CommandText = """
-                UPDATE search_batch SET Status=2, FileName=@file, FilePath=@path, CompletedAt=@now
-                 WHERE ClaimToken=@token
-                """;
-            Add(cmd, "@file", fileName); Add(cmd, "@path", filePath);
-            Add(cmd, "@now", now); Add(cmd, "@token", claim.Token);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
+        await db.SaveChangesAsync(ct);
+        await db.SearchBatches
+            .Where(b => b.ClaimToken == claim.Token)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Status, 2)
+                .SetProperty(b => b.FileName, fileName)
+                .SetProperty(b => b.FilePath, filePath)
+                .SetProperty(b => b.CompletedAt, now), ct);
         await tx.CommitAsync(ct);
     }
 
     public async Task FailAsync(SearchClaim claim, string failureMessage, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var now = DateTime.UtcNow.ToString("o");
-        await ExecuteAsync(conn, (DbTransaction)tx,
-            "UPDATE search_request SET ProcessingStatus=3, LastError=@error, UpdatedAt=@now WHERE ClaimToken=@token AND ProcessingStatus=1",
-            claim.Token, failureMessage, now, ct);
-        await ExecuteAsync(conn, (DbTransaction)tx,
-            "UPDATE search_batch SET Status=3, Error=@error, CompletedAt=@now WHERE ClaimToken=@token",
-            claim.Token, failureMessage, now, ct);
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var now = DateTime.UtcNow;
+        await db.SearchRequests
+            .Where(r => r.ClaimToken == claim.Token && r.ProcessingStatus == 1)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.ProcessingStatus, 3)
+                .SetProperty(r => r.LastError, failureMessage)
+                .SetProperty(r => r.UpdatedAt, now), ct);
+        await db.SearchBatches
+            .Where(b => b.ClaimToken == claim.Token)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Status, 3)
+                .SetProperty(b => b.Error, failureMessage)
+                .SetProperty(b => b.CompletedAt, now), ct);
         await tx.CommitAsync(ct);
     }
 
     public async Task<SearchGeneratedBatch?> GetGeneratedBatchAsync(string? fileName, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = fileName is null
-            ? "SELECT * FROM search_batch WHERE Status=2 ORDER BY Id DESC LIMIT 1"
-            : "SELECT * FROM search_batch WHERE FileName=@file AND Status=2 ORDER BY Id DESC LIMIT 1";
-        if (fileName is not null) Add(cmd, "@file", fileName);
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) return null;
-        var path = Text(reader, "FilePath");
-        var name = Text(reader, "FileName");
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(name)) return null;
-        return new SearchGeneratedBatch(Convert.ToInt64(reader["Id"]), name, path, Convert.ToInt32(reader["RecordCount"]));
+        await using var db = _db.CreateContext();
+        var query = db.SearchBatches.AsNoTracking().Where(b => b.Status == 2);
+        if (fileName is not null) query = query.Where(b => b.FileName == fileName);
+        var batch = await query.OrderByDescending(b => b.Id).FirstOrDefaultAsync(ct);
+        if (batch is null) return null;
+        if (string.IsNullOrWhiteSpace(batch.FilePath) || string.IsNullOrWhiteSpace(batch.FileName)) return null;
+        return new SearchGeneratedBatch(batch.Id, batch.FileName, batch.FilePath, batch.RecordCount ?? 0);
     }
 
     public async Task RecordFvuAsync(long batchId, bool passed, string? zipPath, string? hash, string? failureMessage, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE search_batch
-               SET Status=@status, FvuZipPath=@zip, FvuHash=@hash, Error=@error, CompletedAt=@now
-             WHERE Id=@id
-            """;
-        Add(cmd, "@status", passed ? 4 : 5);
-        Add(cmd, "@zip", zipPath);
-        Add(cmd, "@hash", hash);
-        Add(cmd, "@error", failureMessage);
-        Add(cmd, "@now", DateTime.UtcNow.ToString("o"));
-        Add(cmd, "@id", batchId);
-        await cmd.ExecuteNonQueryAsync(ct);
+        await using var db = _db.CreateContext();
+        await db.SearchBatches
+            .Where(b => b.Id == batchId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Status, passed ? 4 : 5)
+                .SetProperty(b => b.FvuZipPath, zipPath)
+                .SetProperty(b => b.FvuHash, hash)
+                .SetProperty(b => b.Error, failureMessage)
+                .SetProperty(b => b.CompletedAt, DateTime.UtcNow), ct);
     }
 
     public async Task<SearchResponseImportResult> ImportResponseAsync(SearchResponseImport response, CancellationToken ct = default)
     {
-        await using var conn = _db.Create();
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        var localTx = (DbTransaction)tx;
-        await using (var duplicate = conn.CreateCommand())
+        await using var db = _db.CreateContext();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.AcquireTransactionLockAsync($"CKYC:search-response:{response.SourceHash}", ct);
+
+        var duplicate = await db.SearchResponseFiles.AnyAsync(f => f.SourceHash == response.SourceHash, ct);
+        if (duplicate)
         {
-            duplicate.Transaction = localTx;
-            duplicate.CommandText = "SELECT COUNT(1) FROM search_response_file WHERE SourceHash=@hash";
-            Add(duplicate, "@hash", response.SourceHash);
-            if (Convert.ToInt32(await duplicate.ExecuteScalarAsync(ct)) > 0)
-            {
-                await tx.RollbackAsync(ct);
-                return new SearchResponseImportResult(0, 0, true);
-            }
+            await tx.RollbackAsync(ct);
+            return new SearchResponseImportResult(0, 0, true);
         }
 
-        long? searchBatchId = null;
-        await using (var batch = conn.CreateCommand())
-        {
-            batch.Transaction = localTx;
-            batch.CommandText = "SELECT Id FROM search_batch WHERE FileName=@file ORDER BY Id DESC LIMIT 1";
-            Add(batch, "@file", response.InputFileName);
-            var value = await batch.ExecuteScalarAsync(ct);
-            if (value is not null && value is not DBNull) searchBatchId = Convert.ToInt64(value);
-        }
+        var searchBatchId = await db.SearchBatches
+            .Where(b => b.FileName == response.InputFileName)
+            .OrderByDescending(b => b.Id)
+            .Select(b => (long?)b.Id)
+            .FirstOrDefaultAsync(ct);
 
-        var now = DateTime.UtcNow.ToString("o");
-        await using (var header = conn.CreateCommand())
+        var now = DateTime.UtcNow;
+        db.SearchResponseFiles.Add(new SearchResponseFileEntity
         {
-            header.Transaction = localTx;
-            header.CommandText = """
-                INSERT INTO search_response_file
-                    (SearchBatchId, ResponseFileName, ResponseFileNumber, FiCode, RegionCode,
-                     TotalRecords, TotalProcessed, RecordsUnderProcessing, RecordsFailed,
-                     ResponseTimestamp, Filler, RawHeaderData, SourceArchiveName, SourceHash, CreatedAt)
-                VALUES (@batch, @file, @number, @fi, @region, @total, @processed, @under,
-                        @failed, @timestamp, @filler, @raw, @archive, @hash, @now)
-                """;
-            Add(header, "@batch", searchBatchId); Add(header, "@file", response.Header.ResponseFileName);
-            Add(header, "@number", response.Header.ResponseFileNumber); Add(header, "@fi", response.Header.FiCode);
-            Add(header, "@region", response.Header.RegionCode); Add(header, "@total", response.Header.TotalRecords);
-            Add(header, "@processed", response.Header.TotalProcessed); Add(header, "@under", response.Header.RecordsUnderProcessing);
-            Add(header, "@failed", response.Header.RecordsFailed); Add(header, "@timestamp", response.Header.ResponseTimestamp);
-            Add(header, "@filler", response.Header.Filler); Add(header, "@raw", response.Header.RawHeaderData);
-            Add(header, "@archive", response.SourceArchiveName); Add(header, "@hash", response.SourceHash); Add(header, "@now", now);
-            await header.ExecuteNonQueryAsync(ct);
-        }
+            SearchBatchId = searchBatchId,
+            ResponseFileName = response.Header.ResponseFileName,
+            ResponseFileNumber = response.Header.ResponseFileNumber,
+            FiCode = response.Header.FiCode,
+            RegionCode = response.Header.RegionCode,
+            TotalRecords = response.Header.TotalRecords,
+            TotalProcessed = response.Header.TotalProcessed,
+            RecordsUnderProcessing = response.Header.RecordsUnderProcessing,
+            RecordsFailed = response.Header.RecordsFailed,
+            ResponseTimestamp = response.Header.ResponseTimestamp,
+            Filler = response.Header.Filler,
+            RawHeaderData = response.Header.RawHeaderData,
+            SourceArchiveName = response.SourceArchiveName,
+            SourceHash = response.SourceHash,
+            CreatedAt = now,
+        });
+        var responseLines = response.Details
+            .Where(d => d.InputRecordLineNumber is not null)
+            .Select(d => d.InputRecordLineNumber!.Value).Distinct().ToList();
+        var matchedRequests = await db.SearchRequests
+            .Where(r => r.OutputFileName == response.InputFileName
+                     && r.OutputLineNumber != null && responseLines.Contains(r.OutputLineNumber.Value))
+            .ToListAsync(ct);
+        var requestByLine = matchedRequests.GroupBy(r => r.OutputLineNumber!.Value)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(r => r.Id).First());
 
         var matched = 0;
         foreach (var detail in response.Details)
         {
-            long? requestId = null;
-            if (detail.InputRecordLineNumber is not null)
-            {
-                await using var request = conn.CreateCommand();
-                request.Transaction = localTx;
-                request.CommandText = "SELECT Id FROM search_request WHERE OutputFileName=@file AND OutputLineNumber=@line ORDER BY Id DESC LIMIT 1";
-                Add(request, "@file", response.InputFileName); Add(request, "@line", detail.InputRecordLineNumber);
-                var value = await request.ExecuteScalarAsync(ct);
-                if (value is not null && value is not DBNull) requestId = Convert.ToInt64(value);
-            }
+            var request = detail.InputRecordLineNumber is not null
+                && requestByLine.TryGetValue(detail.InputRecordLineNumber.Value, out var found) ? found : null;
+            long? requestId = request?.Id;
 
-            await InsertResponseDetailAsync(conn, localTx, response.Header, detail, requestId, now, ct);
-            if (requestId is null) continue;
+            db.SearchResponses.Add(new SearchResponseEntity
+            {
+                SearchRequestId = requestId,
+                ResponseFileName = response.Header.ResponseFileName,
+                ResponseFileNumber = response.Header.ResponseFileNumber,
+                LineNumber = detail.LineNumber,
+                InputRecordLineNumber = detail.InputRecordLineNumber,
+                ClientType = detail.ClientType,
+                SearchByOvdType = detail.SearchByOvdType,
+                SearchByOvdNumber = detail.SearchByOvdNumber,
+                SearchKey = detail.SearchKey,
+                CkycReferenceNumber = detail.CkycReferenceNumber,
+                FirstName = detail.FirstName,
+                MiddleName = detail.MiddleName,
+                LastName = detail.LastName,
+                Gender = detail.Gender,
+                MobileNumber = detail.MobileNumber,
+                EmailAddress = detail.EmailAddress,
+                LastUpdatedDate = detail.LastUpdatedDate,
+                Cin = detail.Cin,
+                LegalEntityName = detail.LegalEntityName,
+                PhotoReference = detail.PhotoReference,
+                RegistrationDate = detail.RegistrationDate,
+                DeactivationReason = detail.DeactivationReason,
+                Remark = detail.Remark,
+                PanDocument = At(detail.DocumentFlags, 0),
+                AadhaarDocument = At(detail.DocumentFlags, 1),
+                PassportDocument = At(detail.DocumentFlags, 2),
+                DrivingLicenseDocument = At(detail.DocumentFlags, 3),
+                VoterIdDocument = At(detail.DocumentFlags, 4),
+                NregaDocument = At(detail.DocumentFlags, 5),
+                DisabilityDocument = At(detail.DocumentFlags, 6),
+                Form6061Document = At(detail.DocumentFlags, 7),
+                ForeignJurisdictionDocument = At(detail.DocumentFlags, 8),
+                NprDocument = At(detail.DocumentFlags, 9),
+                UtilityBillDocument = At(detail.DocumentFlags, 10),
+                IncorporationDocument = At(detail.DocumentFlags, 11),
+                MemorandumDocument = At(detail.DocumentFlags, 12),
+                RegistrationCertificate = At(detail.DocumentFlags, 13),
+                PartnershipDeed = At(detail.DocumentFlags, 14),
+                TrustDeed = At(detail.DocumentFlags, 15),
+                SupportingPoiDocument = At(detail.DocumentFlags, 16),
+                OtherDocument = At(detail.DocumentFlags, 17),
+                Filler1 = At(detail.Fillers, 0),
+                Filler2 = At(detail.Fillers, 1),
+                Filler3 = At(detail.Fillers, 2),
+                Filler4 = At(detail.Fillers, 3),
+                Filler5 = At(detail.Fillers, 4),
+                Filler6 = At(detail.Fillers, 5),
+                Filler7 = At(detail.Fillers, 6),
+                Filler8 = At(detail.Fillers, 7),
+                RecordLevelHash = detail.RecordLevelHash,
+                RawResponseData = detail.RawResponseData,
+                CreatedAt = now,
+            });
+            if (request is null) continue;
             matched++;
-            await using var update = conn.CreateCommand();
-            update.Transaction = localTx;
-            update.CommandText = """
-                UPDATE search_request
-                   SET ResponseStatus='ResponseRead', LastSearchKey=@key, LastCkycReference=@reference,
-                       LastResponseRemark=@remark, ResponseReadAt=@now, UpdatedAt=@now
-                 WHERE Id=@id
-                """;
-            Add(update, "@key", detail.SearchKey); Add(update, "@reference", detail.CkycReferenceNumber);
-            Add(update, "@remark", detail.Remark); Add(update, "@now", now); Add(update, "@id", requestId);
-            await update.ExecuteNonQueryAsync(ct);
+            request.ResponseStatus = "ResponseRead";
+            request.LastSearchKey = detail.SearchKey;
+            request.LastCkycReference = detail.CkycReferenceNumber;
+            request.LastResponseRemark = detail.Remark;
+            request.ResponseReadAt = now;
+            request.UpdatedAt = now;
         }
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new SearchResponseImportResult(response.Details.Count, matched, false);
     }
 
-    private static async Task InsertResponseDetailAsync(DbConnection conn, DbTransaction tx, SearchResponseHeader header,
-        SearchResponseDetail detail, long? requestId, string now, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO search_response
-                (SearchRequestId, ResponseFileName, ResponseFileNumber, LineNumber, InputRecordLineNumber,
-                 ClientType, SearchByOvdType, SearchByOvdNumber, SearchKey, CkycReferenceNumber,
-                 FirstName, MiddleName, LastName, Gender, MobileNumber, EmailAddress, LastUpdatedDate,
-                 Cin, LegalEntityName, PhotoReference, RegistrationDate, DeactivationReason, Remark,
-                 PanDocument, AadhaarDocument, PassportDocument, DrivingLicenseDocument, VoterIdDocument,
-                 NregaDocument, DisabilityDocument, Form6061Document, ForeignJurisdictionDocument, NprDocument,
-                 UtilityBillDocument, IncorporationDocument, MemorandumDocument, RegistrationCertificate,
-                 PartnershipDeed, TrustDeed, SupportingPoiDocument, OtherDocument, Filler1, Filler2, Filler3,
-                 Filler4, Filler5, Filler6, Filler7, Filler8, RecordLevelHash, RawResponseData, CreatedAt)
-            VALUES (@request, @file, @number, @line, @inputLine, @client, @ovdType, @ovdNumber, @key, @reference,
-                    @first, @middle, @last, @gender, @mobile, @email, @updated, @cin, @legal, @photo, @registration,
-                    @deactivation, @remark, @pan, @aadhaar, @passport, @dl, @voter, @nrega, @disability, @form,
-                    @foreign, @npr, @utility, @incorporation, @memorandum, @certificate, @partnership, @trust,
-                    @supporting, @other, @f1, @f2, @f3, @f4, @f5, @f6, @f7, @f8, @hash, @raw, @now)
-            """;
-        Add(cmd, "@request", requestId); Add(cmd, "@file", header.ResponseFileName); Add(cmd, "@number", header.ResponseFileNumber);
-        Add(cmd, "@line", detail.LineNumber); Add(cmd, "@inputLine", detail.InputRecordLineNumber); Add(cmd, "@client", detail.ClientType);
-        Add(cmd, "@ovdType", detail.SearchByOvdType); Add(cmd, "@ovdNumber", detail.SearchByOvdNumber); Add(cmd, "@key", detail.SearchKey);
-        Add(cmd, "@reference", detail.CkycReferenceNumber); Add(cmd, "@first", detail.FirstName); Add(cmd, "@middle", detail.MiddleName);
-        Add(cmd, "@last", detail.LastName); Add(cmd, "@gender", detail.Gender); Add(cmd, "@mobile", detail.MobileNumber);
-        Add(cmd, "@email", detail.EmailAddress); Add(cmd, "@updated", detail.LastUpdatedDate); Add(cmd, "@cin", detail.Cin);
-        Add(cmd, "@legal", detail.LegalEntityName); Add(cmd, "@photo", detail.PhotoReference); Add(cmd, "@registration", detail.RegistrationDate);
-        Add(cmd, "@deactivation", detail.DeactivationReason); Add(cmd, "@remark", detail.Remark);
-        var flags = detail.DocumentFlags; var fillers = detail.Fillers;
-        foreach (var (name, value) in new[] { ("@pan", At(flags, 0)), ("@aadhaar", At(flags, 1)), ("@passport", At(flags, 2)), ("@dl", At(flags, 3)), ("@voter", At(flags, 4)), ("@nrega", At(flags, 5)), ("@disability", At(flags, 6)), ("@form", At(flags, 7)), ("@foreign", At(flags, 8)), ("@npr", At(flags, 9)), ("@utility", At(flags, 10)), ("@incorporation", At(flags, 11)), ("@memorandum", At(flags, 12)), ("@certificate", At(flags, 13)), ("@partnership", At(flags, 14)), ("@trust", At(flags, 15)), ("@supporting", At(flags, 16)), ("@other", At(flags, 17)), ("@f1", At(fillers, 0)), ("@f2", At(fillers, 1)), ("@f3", At(fillers, 2)), ("@f4", At(fillers, 3)), ("@f5", At(fillers, 4)), ("@f6", At(fillers, 5)), ("@f7", At(fillers, 6)), ("@f8", At(fillers, 7)) }) Add(cmd, name, value);
-        Add(cmd, "@hash", detail.RecordLevelHash); Add(cmd, "@raw", detail.RawResponseData); Add(cmd, "@now", now);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
     private static string? At(string?[] values, int index) => index < values.Length ? values[index] : null;
 
-    private static async Task ExecuteAsync(DbConnection conn, DbTransaction tx, string sql,
-        string token, string failureMessage, string now, CancellationToken ct)
+    private static async Task<List<SearchRequest>> ReadClaimAsync(CkycDbContext db, string token, CancellationToken ct)
     {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx; cmd.CommandText = sql;
-        Add(cmd, "@token", token); Add(cmd, "@error", failureMessage); Add(cmd, "@now", now);
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
-
-    private static async Task<IReadOnlyList<SearchRequest>> ReadClaimAsync(
-        DbConnection conn, DbTransaction tx, string token, CancellationToken ct)
-    {
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = "SELECT * FROM search_request WHERE ClaimToken=@token ORDER BY Id";
-        Add(cmd, "@token", token);
-        var result = new List<SearchRequest>();
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        while (await r.ReadAsync(ct))
+        var rows = await db.SearchRequests.AsNoTracking()
+            .Where(r => r.ClaimToken == token)
+            .OrderBy(r => r.Id)
+            .ToListAsync(ct);
+        return rows.Select(r => new SearchRequest
         {
-            result.Add(new SearchRequest
-            {
-                Id = Convert.ToInt64(r["Id"]), ExternalRequestId = Text(r, "ExternalRequestId"),
-                CustomerId = Text(r, "CustomerId"), ClientType = Text(r, "ClientType") ?? "I",
-                SearchOption = Convert.ToInt32(r["SearchOption"]), IdentityTypeAndNumber = Text(r, "IdentityTypeAndNumber"),
-                FirstName = Text(r, "FirstName"), MiddleName = Text(r, "MiddleName"), LastName = Text(r, "LastName"),
-                DateOfBirth = Text(r, "DateOfBirth"), LegalEntityName = Text(r, "LegalEntityName"),
-                DateOfIncorporation = Text(r, "DateOfIncorporation"), Gender = Text(r, "Gender"),
-                PhotoReferenceNumber = Text(r, "PhotoReferenceNumber"), Relation = Text(r, "Relation"),
-                RelationFirstName = Text(r, "RelationFirstName"), RelationMiddleName = Text(r, "RelationMiddleName"),
-                RelationLastName = Text(r, "RelationLastName"), MobileNumber = Text(r, "MobileNumber"),
-                VerifiableCredential = Text(r, "VerifiableCredential"), Constitution = Text(r, "Constitution"),
-                RawRequestJson = Text(r, "RawRequestJson"), ProcessingStatus = Convert.ToInt32(r["ProcessingStatus"]),
-                ClaimToken = Text(r, "ClaimToken"), ClaimedAt = Date(r, "ClaimedAt")
-            });
-        }
-        return result;
+            Id = r.Id,
+            ExternalRequestId = r.ExternalRequestId,
+            CustomerId = r.CustomerId,
+            ClientType = r.ClientType ?? "I",
+            SearchOption = r.SearchOption ?? 0,
+            IdentityTypeAndNumber = r.IdentityTypeAndNumber,
+            FirstName = r.FirstName,
+            MiddleName = r.MiddleName,
+            LastName = r.LastName,
+            DateOfBirth = r.DateOfBirth,
+            LegalEntityName = r.LegalEntityName,
+            DateOfIncorporation = r.DateOfIncorporation,
+            Gender = r.Gender,
+            PhotoReferenceNumber = r.PhotoReferenceNumber,
+            Relation = r.Relation,
+            RelationFirstName = r.RelationFirstName,
+            RelationMiddleName = r.RelationMiddleName,
+            RelationLastName = r.RelationLastName,
+            MobileNumber = r.MobileNumber,
+            VerifiableCredential = r.VerifiableCredential,
+            Constitution = r.Constitution,
+            RawRequestJson = r.RawRequestJson,
+            ProcessingStatus = r.ProcessingStatus ?? 0,
+            ClaimToken = r.ClaimToken,
+            ClaimedAt = r.ClaimedAt,
+        }).ToList();
     }
-
-    private static string? Text(DbDataReader reader, string name) => reader[name] is DBNull ? null : Convert.ToString(reader[name]);
-    private static DateTime? Date(DbDataReader reader, string name) => DateTime.TryParse(Text(reader, name), out var value) ? value : null;
-    private static void Add(DbCommand command, string name, object? value) => command.Parameters.Add(MasterRepository.NewParam(name, value));
 }

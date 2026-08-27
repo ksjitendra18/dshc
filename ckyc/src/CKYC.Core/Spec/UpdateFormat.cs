@@ -51,7 +51,8 @@ public static class UpdateFormat
 
     private static readonly Field[] LegalHeaderFields =
     {
-        IndividualHeaderFields[0], IndividualHeaderFields[1], IndividualHeaderFields[2],
+        IndividualHeaderFields[0], IndividualHeaderFields[1],
+        new("regionCode", "Region Code / Branch Code", 11, FieldRequirement.M),
         IndividualHeaderFields[3], IndividualHeaderFields[4], IndividualHeaderFields[5], IndividualHeaderFields[6],
         IndividualHeaderFields[7], IndividualHeaderFields[8],
         new("filler3", "Filler 3", 50, FieldRequirement.O),   // legal header carries an extra filler
@@ -108,7 +109,7 @@ public static class UpdateFormat
         new("residentialStatusSupportedByDoc", "Residential Status supported with document", 1, FieldRequirement.CM),
         new("nationalityFlg", "Nationality Update Flg", 1, FieldRequirement.O, Flag: true),
         new("nationality", "Nationality", 2, FieldRequirement.O),
-        new("nationalitySupportedByDoc", "Nationality supported with document", 1, FieldRequirement.CM),
+        new("nationalitySupportedByDoc", "Nationality supported with document", 1, FieldRequirement.O),
         new("disabilityFlg", "Person with Disability (PwD) status Update Flg", 1, FieldRequirement.O, Flag: true),
         new("differentlyAbled", "Person with Disability (PwD)", 1, FieldRequirement.CM),       // Y/N
         new("impairmentType", "Type of Impairment", 2, FieldRequirement.CM),
@@ -199,7 +200,9 @@ public static class UpdateFormat
         new("currVerifiedFromDigiLocker", "Document verified from Digilocker", 1, FieldRequirement.CM),
         new("currEquivalentEDoc", "Equivalent e-doc", 1, FieldRequirement.CM),
         new("currRemoteGeoTagging", "Remote Geo Tagging", 1, FieldRequirement.CM),
-        new("currAddressExactlyMatch", "Address exactly match with Deemed PoA/Deemed OVD", 1, FieldRequirement.CM),
+        // The size cell says 1, but the same row's allowed values and the vendor .UPD sample
+        // contain Exact Match / No Match / Partial Match. Use the maximum encoded value.
+        new("currAddressExactlyMatch", "Address exactly match with Deemed PoA/Deemed OVD", 13, FieldRequirement.CM),
         new("currPositiveVerification", "Positive verification of current address through letter or deliveries", 1, FieldRequirement.CM),
         new("currPhysicalVerificationThirdParty", "Physical verification (including geo tagging) by third party", 1, FieldRequirement.CM),
         new("currPhysicalVerificationReOfficial", "Physical verification (including geo tagging) by RE official", 1, FieldRequirement.CM),
@@ -247,7 +250,7 @@ public static class UpdateFormat
         new("faceToFaceWithReOfficial", "Face to Face with RE official", 1, FieldRequirement.CM),
         new("nonFaceToFace", "Non face to face", 1, FieldRequirement.CM),
         new("faceToFaceWithNonOfficial", "Face to Face with non-official such as Business Correspondent", 1, FieldRequirement.CM),
-        new("attestationFlg", "Attestation Details flg", 1, FieldRequirement.O, Flag: true),
+        new("attestationFlg", "Attestation Details flg", 1, FieldRequirement.M, Flag: true),
         new("attestationDate", "Attestation Date", 10, FieldRequirement.CM, Date: true),
         new("employeeName", "Employee Name", 50, FieldRequirement.CM),
         new("employeeCode", "Employee Code", 50, FieldRequirement.CM),

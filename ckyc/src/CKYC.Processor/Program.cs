@@ -28,7 +28,19 @@ LogManager.Setup().LoadConfigurationFromFile("NLog.config", optional: false);
 var logger = LogManager.GetCurrentClassLogger();
 AppDomain.CurrentDomain.ProcessExit += (_, _) => LogManager.Shutdown();
 
-var settingsPath = ArgValue(args, "--settings");
+var effectiveArgs = args.ToList();
+var settingsIndex = effectiveArgs.FindIndex(arg => string.Equals(arg, "--settings", StringComparison.OrdinalIgnoreCase));
+string? settingsPath = null;
+if (settingsIndex >= 0)
+{
+    if (settingsIndex + 1 >= effectiveArgs.Count)
+    {
+        logger.Error("--settings requires a file path.");
+        return 1;
+    }
+    settingsPath = effectiveArgs[settingsIndex + 1];
+    effectiveArgs.RemoveRange(settingsIndex, 2);
+}
 var settings = SettingsLoader.Load(settingsPath);
 var app = new AppContext(settings);
 
@@ -37,13 +49,13 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
 var registry = CommandRegistry.Build();
 
-if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
+if (effectiveArgs.Count == 0 || effectiveArgs[0] is "help" or "--help" or "-h")
 {
     Console.Write(registry.Help());
     return 0;
 }
 
-var commandName = args[0];
+var commandName = effectiveArgs[0];
 var command = registry.Resolve(commandName);
 if (command is null)
 {
@@ -55,7 +67,7 @@ if (command is null)
 try
 {
     await app.InitializeAsync(cts.Token);
-    return await command.ExecuteAsync(app, args.Skip(1).ToArray(), cts.Token);
+    return await command.ExecuteAsync(app, effectiveArgs.Skip(1).ToArray(), cts.Token);
 }
 catch (OperationCanceledException)
 {
@@ -67,10 +79,4 @@ catch (Exception ex)
     logger.Error(ex, "Unhandled exception during command '{Command}'", commandName);
     if (settings.Simulation.SaveErrorsEnabled) logger.Error(ex, "Full exception details");
     return 1;
-}
-
-static string? ArgValue(string[] args, string name)
-{
-    var i = Array.IndexOf(args, name);
-    return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
 }

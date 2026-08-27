@@ -44,6 +44,50 @@ public enum MasterRecordStatus
 
     /// <summary>Record permanently rejected by CERSAI.</summary>
     Rejected = 10,
+
+    /// <summary>
+    /// Daily customer-id fetch from the CBS failed. Available for operator reports;
+    /// the pipeline itself still treats a failed fetch as retryable Pending.
+    /// </summary>
+    DataFetchFailed = 11,
+}
+
+/// <summary>
+/// The compact 2–3 character code persisted in <c>master_record.StatusCode</c> (kept in
+/// sync with the numeric <see cref="MasterRecordStatus"/> on every status write) and
+/// seeded in <c>status_master</c> (append-only — never renumber or reuse).
+/// </summary>
+public static class MasterRecordStatusCode
+{
+    public const string Pending = "PND";
+    public const string CrmFetched = "CRM";
+    public const string Saved = "SAV";
+    public const string Batched = "BAT";
+    public const string FvuPassed = "FVP";
+    public const string FvuFailed = "FVF";
+    public const string Failed = "FLD";
+    public const string Uploaded = "UPL";
+    public const string ResponseRead = "RSP";
+    public const string Reconciled = "RCN";
+    public const string Rejected = "REJ";
+    public const string DataFetchFailed = "DTF";
+
+    public static string For(MasterRecordStatus status) => status switch
+    {
+        MasterRecordStatus.Pending => Pending,
+        MasterRecordStatus.CrmFetched => CrmFetched,
+        MasterRecordStatus.Saved => Saved,
+        MasterRecordStatus.Batched => Batched,
+        MasterRecordStatus.FvuPassed => FvuPassed,
+        MasterRecordStatus.FvuFailed => FvuFailed,
+        MasterRecordStatus.Failed => Failed,
+        MasterRecordStatus.Uploaded => Uploaded,
+        MasterRecordStatus.ResponseRead => ResponseRead,
+        MasterRecordStatus.Reconciled => Reconciled,
+        MasterRecordStatus.Rejected => Rejected,
+        MasterRecordStatus.DataFetchFailed => DataFetchFailed,
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown status."),
+    };
 }
 
 public static class MasterRecordStatusExtensions
@@ -68,6 +112,7 @@ public static class MasterRecordStatusExtensions
         MasterRecordStatus.ResponseRead => "Response read",
         MasterRecordStatus.Reconciled => "Reconciled",
         MasterRecordStatus.Rejected => "Rejected",
+        MasterRecordStatus.DataFetchFailed => "Data fetch failed",
         _ => status.ToString(),
     };
 }

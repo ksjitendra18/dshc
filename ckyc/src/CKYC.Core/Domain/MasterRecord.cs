@@ -21,6 +21,12 @@ public sealed class MasterRecord
     public string ClientType { get; set; } = "I";
     public DateTime BusinessDate { get; set; }
     public MasterRecordStatus Status { get; set; } = MasterRecordStatus.Pending;
+    /// <summary>
+    /// Compact 2–3 char code mirroring <see cref="Status"/> (PND/CRM/SAV/BAT/FVP/FVF/FLD/UPL/RSP/RCN/REJ/DTF).
+    /// Denormalized onto the row so reports never need the status_master JOIN; written in the
+    /// same UPDATE as Status so the two can never drift.
+    /// </summary>
+    public string StatusCode { get; set; } = MasterRecordStatusCode.For(MasterRecordStatus.Pending);
     public string? Remarks { get; set; }
 
     // ---- retry / attempt bookkeeping (support retries at any stage) ----
