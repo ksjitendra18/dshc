@@ -17,6 +17,14 @@
 --   6. Record-40 address match classifications use NVARCHAR(13), as required for
 --      Exact Match / No Match / Partial Match by the individual workbooks.
 --
+-- v3 changes (pre-batch customer search):
+--   7. individual_search — one row per candidate search request for an individual
+--      customer (per identity document held + a name/DOB/gender/relation fallback).
+--   8. status_master gains StatusValue 12 SRP (PendingSearch), 13 SRD (Searched) and
+--      14 SRF (SearchFound). Individual records now flow Saved -> PendingSearch ->
+--      Searched -> Batched; SearchFound is terminal (the customer already exists).
+--   9. activity_type gains the retryable Search activity.
+--
 -- Column definitions use ONLY a length (NVARCHAR(n)) plus the identity primary
 -- key: no NOT NULL / UNIQUE / CHECK / FK constraints — except the document and
 -- file-content tables where binary integrity is enforced deliberately.
@@ -28,6 +36,7 @@ CREATE TABLE master_record (
     Id                           BIGINT IDENTITY(1,1) PRIMARY KEY,
     CustomerId                   NVARCHAR(50),
     ClientType                   NVARCHAR(1),
+    Source                       NVARCHAR(20) CONSTRAINT DF_master_record_source DEFAULT ('beckyc'),
     BusinessDate                 DATE,
     Status                       INT,
     StatusCode                   NVARCHAR(3),
@@ -275,6 +284,59 @@ CREATE TABLE individual_record_70 (
 );
 CREATE INDEX ix_individual_record70_customer ON individual_record_70 (CustomerId);
 CREATE INDEX ix_individual_record70_master   ON individual_record_70 (MasterRecordId);
+GO
+
+-- ============================================================================
+-- Pre-batch customer search (individual). One row per candidate search request
+-- built from the details actually held for the customer (record-30 OVDs plus the
+-- record-20 PAN, plus a name/DOB/gender/relation fallback). A customer therefore
+-- has as many rows as they have searchable details.
+-- ProcessingStatus: 0 Pending, 1 Processing (claimed), 2 Completed, 3 Failed.
+-- Outcome: Found | NotFound | Error | Skipped. SearchKey is the 20-char key the
+-- API returns when no record is found (written into individual_record_20).
+-- ============================================================================
+
+CREATE TABLE individual_search (
+    Id                       BIGINT IDENTITY(1,1) PRIMARY KEY,
+    MasterRecordId           BIGINT,
+    CustomerId               NVARCHAR(50),
+    ClientType               NVARCHAR(1),
+    SearchOption             INT,
+    IdentityTypeAndNumber    NVARCHAR(2000),
+    FirstName                NVARCHAR(33),
+    MiddleName               NVARCHAR(33),
+    LastName                 NVARCHAR(33),
+    DateOfBirth              NVARCHAR(10),
+    LegalEntityName          NVARCHAR(99),
+    DateOfIncorporation      NVARCHAR(10),
+    Gender                   NVARCHAR(1),
+    PhotoReferenceNumber     NVARCHAR(40),
+    Relation                 NVARCHAR(50),
+    RelationFirstName        NVARCHAR(33),
+    RelationMiddleName       NVARCHAR(33),
+    RelationLastName         NVARCHAR(33),
+    MobileNumber             NVARCHAR(10),
+    VerifiableCredential     NVARCHAR(50),
+    Constitution             NVARCHAR(1),
+    RawRequestJson           NVARCHAR(MAX),
+    ProcessingStatus         INT,
+    ClaimToken               NVARCHAR(36),
+    ClaimedAt                DATETIME2,
+    ProcessedAt              DATETIME2,
+    Outcome                  NVARCHAR(20),
+    SearchKey                NVARCHAR(20),
+    CkycReferenceNumber      NVARCHAR(15),
+    ResponseRemark           NVARCHAR(250),
+    ResponseReadAt           DATETIME2,
+    RawResponseJson          NVARCHAR(MAX),
+    LastError                NVARCHAR(2000),
+    CreatedAt                DATETIME2,
+    UpdatedAt                DATETIME2
+);
+CREATE INDEX ix_individual_search_status   ON individual_search (ProcessingStatus, Id);
+CREATE INDEX ix_individual_search_master   ON individual_search (MasterRecordId);
+CREATE INDEX ix_individual_search_customer ON individual_search (CustomerId);
+CREATE INDEX ix_individual_search_claim    ON individual_search (ClaimToken);
 GO
 
 -- ============================================================================
@@ -574,7 +636,7 @@ CREATE TABLE activity_type (
 CREATE INDEX ix_activity_code ON activity_type (Code);
 GO
 
--- Status master: maps the master_record.Status integer (0-11) to a 2-3 char
+-- Status master: maps the master_record.Status integer (0-14) to a 2-3 char
 -- code + readable description. Status stays INT; StatusCode is the denormalized
 -- copy persisted on master_record itself.
 CREATE TABLE status_master (
@@ -618,7 +680,7 @@ GO
 -- ProcessingStatus: 0 Pending, 1 Processing (claimed), 2 SRC generated, 3 Failed.
 -- ============================================================================
 
-CREATE TABLE search_request (
+CREATE TABLE bulk_search_request (
     Id                       BIGINT IDENTITY(1,1) PRIMARY KEY,
     ExternalRequestId        NVARCHAR(50),
     CustomerId               NVARCHAR(50),
@@ -656,12 +718,12 @@ CREATE TABLE search_request (
     CreatedAt                DATETIME2,
     UpdatedAt                DATETIME2
 );
-CREATE INDEX ix_search_request_status ON search_request (ProcessingStatus, Id);
-CREATE INDEX ix_search_request_claim  ON search_request (ClaimToken);
-CREATE INDEX ix_search_request_output ON search_request (OutputFileName, OutputLineNumber);
+CREATE INDEX ix_bulk_search_request_status ON bulk_search_request (ProcessingStatus, Id);
+CREATE INDEX ix_bulk_search_request_claim  ON bulk_search_request (ClaimToken);
+CREATE INDEX ix_bulk_search_request_output ON bulk_search_request (OutputFileName, OutputLineNumber);
 GO
 
-CREATE TABLE search_batch (
+CREATE TABLE bulk_search_batch (
     Id             BIGINT IDENTITY(1,1) PRIMARY KEY,
     BusinessDate   DATE,
     FileSequence   INT,
@@ -676,11 +738,11 @@ CREATE TABLE search_batch (
     CreatedAt      DATETIME2,
     CompletedAt    DATETIME2
 );
-CREATE INDEX ix_search_batch_date ON search_batch (BusinessDate, FileSequence);
-CREATE INDEX ix_search_batch_file ON search_batch (FileName);
+CREATE INDEX ix_bulk_search_batch_date ON bulk_search_batch (BusinessDate, FileSequence);
+CREATE INDEX ix_bulk_search_batch_file ON bulk_search_batch (FileName);
 GO
 
-CREATE TABLE search_response (
+CREATE TABLE bulk_search_response (
     Id                          BIGINT IDENTITY(1,1) PRIMARY KEY,
     SearchRequestId             BIGINT,
     ResponseFileName            NVARCHAR(260),
@@ -735,10 +797,10 @@ CREATE TABLE search_response (
     RawResponseData             NVARCHAR(MAX),
     CreatedAt                   DATETIME2
 );
-CREATE INDEX ix_search_response_request ON search_response (SearchRequestId);
+CREATE INDEX ix_bulk_search_response_request ON bulk_search_response (SearchRequestId);
 GO
 
-CREATE TABLE search_response_file (
+CREATE TABLE bulk_search_response_file (
     Id                     BIGINT IDENTITY(1,1) PRIMARY KEY,
     SearchBatchId          BIGINT,
     ResponseFileName       NVARCHAR(260),
@@ -756,15 +818,15 @@ CREATE TABLE search_response_file (
     SourceHash             NVARCHAR(128),
     CreatedAt              DATETIME2
 );
-CREATE INDEX ix_search_response_file_batch ON search_response_file (SearchBatchId);
-CREATE INDEX ix_search_response_file_hash  ON search_response_file (SourceHash);
+CREATE INDEX ix_bulk_search_response_file_batch ON bulk_search_response_file (SearchBatchId);
+CREATE INDEX ix_bulk_search_response_file_hash  ON bulk_search_response_file (SourceHash);
 GO
 
 -- ============================================================================
 -- CKYCR download response: immutable file, record lines and ZIP artifacts
 -- ============================================================================
 
-CREATE TABLE download_response_file (
+CREATE TABLE bulk_download_response_file (
     Id                 BIGINT IDENTITY(1,1) PRIMARY KEY,
     ResponseFileName   NVARCHAR(260),
     ResponseFileNumber INT,
@@ -779,10 +841,10 @@ CREATE TABLE download_response_file (
     SourceHash         NVARCHAR(128),
     CreatedAt          DATETIME2
 );
-CREATE INDEX ix_download_response_file_hash ON download_response_file (SourceHash, ResponseFileName);
+CREATE INDEX ix_bulk_download_response_file_hash ON bulk_download_response_file (SourceHash, ResponseFileName);
 GO
 
-CREATE TABLE download_response_line (
+CREATE TABLE bulk_download_response_line (
     Id                      BIGINT IDENTITY(1,1) PRIMARY KEY,
     DownloadResponseFileId  BIGINT,
     SourceEntryPath         NVARCHAR(1000),
@@ -793,10 +855,10 @@ CREATE TABLE download_response_line (
     RawData                 NVARCHAR(MAX),
     CreatedAt               DATETIME2
 );
-CREATE INDEX ix_download_response_line_file ON download_response_line (DownloadResponseFileId);
+CREATE INDEX ix_bulk_download_response_line_file ON bulk_download_response_line (DownloadResponseFileId);
 GO
 
-CREATE TABLE download_response_artifact (
+CREATE TABLE bulk_download_response_artifact (
     Id                     BIGINT IDENTITY(1,1) PRIMARY KEY,
     DownloadResponseFileId BIGINT,
     EntryPath              NVARCHAR(1000),
@@ -805,12 +867,12 @@ CREATE TABLE download_response_artifact (
     Sha256                 NVARCHAR(128),
     CreatedAt              DATETIME2
 );
-CREATE INDEX ix_download_response_artifact_file ON download_response_artifact (DownloadResponseFileId);
+CREATE INDEX ix_bulk_download_response_artifact_file ON bulk_download_response_artifact (DownloadResponseFileId);
 GO
 
 -- ============================================================================
 -- CKYCR bulk update: JSON intake, per-client-type claiming and .UPD.RESm
--- responses. Request rows mirror search_request; batches are generated
+-- responses. Request rows mirror bulk_search_request; batches are generated
 -- separately per client type ("I" individual / "L" legal entity).
 -- ============================================================================
 
@@ -976,6 +1038,11 @@ SELECT 'Store','Persist the individual details to the record tables', 1, 3, 24, 
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='Store');
 
 INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
+SELECT 'Search','Pre-batch customer search against the CKYCR search API', 1, 3, 24, 2.0, 1,
+       'Retryable: the search API can fail transiently; exponential backoff 24h, max 3 tries.', SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='Search');
+
+INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
 SELECT 'BuildZip','Generate the .UPL file + zip', 0, 3, 24, 2.0, 1,
        'Not retryable: deterministic generation; a failure needs manual intervention.', SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='BuildZip');
@@ -1045,4 +1112,19 @@ WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=10);
 INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
 SELECT 11,'DTF','DataFetchFailed','Daily customer-id fetch from the CBS failed; awaiting a retry or manual re-run.',0,1,SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=11);
+
+-- v3: pre-batch customer search states (individual). The search API decides whether the
+-- customer already has a CKYC record (SearchFound -> journey ends) or returns a search key
+-- to create one (Searched -> batch-ready).
+INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
+SELECT 12,'SRP','PendingSearch','Individual details are saved and the record is awaiting the pre-batch customer search.',0,1,SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=12);
+
+INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
+SELECT 13,'SRD','Searched','Customer search completed without a match; the API search key is written to record 20 and the record is ready to batch.',0,1,SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=13);
+
+INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
+SELECT 14,'SRF','SearchFound','Customer search found an existing CKYC record; the customer already exists and is not pushed through creation again.',1,1,SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=14);
 GO

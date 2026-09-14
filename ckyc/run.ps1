@@ -1,5 +1,5 @@
 # Run the full centralized CKYC pipeline end-to-end:
-#   fetch cust -> crm serve (background) -> store -> retry -> build-zip -> fvu -> status
+#   fetch cust -> crm serve (background) -> store -> retry -> search-customer -> build-zip -> fvu -> status
 # The FVU step spawns FVU_RUN_UTILITY.exe (a PyInstaller bundle) which unpacks its runtime to
 # the system temp; on a machine where a sandbox blocks that, run this script elevated or run
 # the `fvu` step outside the sandbox.
@@ -13,9 +13,9 @@ if (-not (Test-Path $exe)) { Write-Host "Building first..."; & .\build.ps1 }
 
 $crmUrl = 'http://127.0.0.1:5291'
 
-Write-Host "=== 1/6 fetch cust ==="; & $exe fetch cust
+Write-Host "=== 1/7 fetch cust ==="; & $exe fetch cust
 
-Write-Host "=== 2/6 starting CRM API ($crmUrl) ==="
+Write-Host "=== 2/7 starting CRM API ($crmUrl) ==="
 $crm = Start-Process -FilePath $exe -ArgumentList @('crm','serve','--urls',$crmUrl) -PassThru -NoNewWindow
 try {
     for ($i = 0; $i -lt 30; $i++) {
@@ -23,10 +23,11 @@ try {
         Start-Sleep -Milliseconds 500
     }
 
-    Write-Host "=== 3/6 store ==="; & $exe store
-    Write-Host "=== 4/6 retry (recovers simulated save failures) ==="; & $exe retry
-    Write-Host "=== 5/6 build-zip ==="; & $exe build-zip
-    Write-Host "=== 6/6 fvu (real FVU_RUN_UTILITY.exe) ==="; & $exe fvu
+    Write-Host "=== 3/7 store ==="; & $exe store
+    Write-Host "=== 4/7 retry (recovers simulated save failures) ==="; & $exe retry
+    Write-Host "=== 5/7 search-customer (pre-batch CKYCR search) ==="; & $exe search-customer
+    Write-Host "=== 6/7 build-zip ==="; & $exe build-zip
+    Write-Host "=== 7/7 fvu (real FVU_RUN_UTILITY.exe) ==="; & $exe fvu
 
     Write-Host "=== status ==="; & $exe status
 }

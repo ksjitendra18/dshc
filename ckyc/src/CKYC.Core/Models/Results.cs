@@ -8,6 +8,17 @@ public sealed record RetryResult(int Attempted, int Succeeded, int PermanentFail
 public sealed record SaveRecordResult(long MasterRecordId, bool Success, string? Error, string? Summary);
 public sealed record SaveBatchResult(int Succeeded, int Failed, int Total);
 
+/// <summary>
+/// A supporting document produced at batch time (not stored in the document database) and
+/// injected directly into a batch's <c>support_docs</c>. <paramref name="FileName"/> is the
+/// record-published name; the batch planner may allocate a per-customer batch name for it.
+/// </summary>
+public sealed record GeneratedDocument(
+    long MasterRecordId,
+    string FileName,
+    string? DocumentKind,
+    byte[] Content);
+
 /// <summary>Identifies a generated batch .UPL file and its zip archive (step 4).</summary>
 public sealed record GeneratedBatch(
     string BatchKey,

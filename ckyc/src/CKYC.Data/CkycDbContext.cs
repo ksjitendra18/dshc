@@ -16,11 +16,11 @@ public partial class CkycDbContext : DbContext
 
     public virtual DbSet<Batch> Batches { get; set; }
 
-    public virtual DbSet<DownloadResponseArtifact> DownloadResponseArtifacts { get; set; }
+    public virtual DbSet<BulkDownloadResponseArtifact> BulkDownloadResponseArtifacts { get; set; }
 
-    public virtual DbSet<DownloadResponseFile> DownloadResponseFiles { get; set; }
+    public virtual DbSet<BulkDownloadResponseFile> BulkDownloadResponseFiles { get; set; }
 
-    public virtual DbSet<DownloadResponseLine> DownloadResponseLines { get; set; }
+    public virtual DbSet<BulkDownloadResponseLine> BulkDownloadResponseLines { get; set; }
 
     public virtual DbSet<FileContent> FileContents { get; set; }
 
@@ -39,6 +39,8 @@ public partial class CkycDbContext : DbContext
     public virtual DbSet<IndividualRecord60> IndividualRecord60s { get; set; }
 
     public virtual DbSet<IndividualRecord70> IndividualRecord70s { get; set; }
+
+    public virtual DbSet<IndividualSearch> IndividualSearches { get; set; }
 
     public virtual DbSet<LegalEntityDocument> LegalEntityDocuments { get; set; }
 
@@ -64,13 +66,13 @@ public partial class CkycDbContext : DbContext
 
     public virtual DbSet<MasterRecordResponse> MasterRecordResponses { get; set; }
 
-    public virtual DbSet<SearchBatch> SearchBatches { get; set; }
+    public virtual DbSet<BulkSearchBatch> BulkSearchBatches { get; set; }
 
-    public virtual DbSet<SearchRequest> SearchRequests { get; set; }
+    public virtual DbSet<BulkSearchRequest> BulkSearchRequests { get; set; }
 
-    public virtual DbSet<SearchResponse> SearchResponses { get; set; }
+    public virtual DbSet<BulkSearchResponse> BulkSearchResponses { get; set; }
 
-    public virtual DbSet<SearchResponseFile> SearchResponseFiles { get; set; }
+    public virtual DbSet<BulkSearchResponseFile> BulkSearchResponseFiles { get; set; }
 
     public virtual DbSet<StatusMaster> StatusMasters { get; set; }
 
@@ -113,26 +115,26 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.ZipPath).HasMaxLength(1000);
         });
 
-        modelBuilder.Entity<DownloadResponseArtifact>(entity =>
+        modelBuilder.Entity<BulkDownloadResponseArtifact>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__download__3214EC077820DDF0");
 
-            entity.ToTable("download_response_artifact");
+            entity.ToTable("bulk_download_response_artifact");
 
-            entity.HasIndex(e => e.DownloadResponseFileId, "ix_download_response_artifact_file");
+            entity.HasIndex(e => e.DownloadResponseFileId, "ix_bulk_download_response_artifact_file");
 
             entity.Property(e => e.EntryPath).HasMaxLength(1000);
             entity.Property(e => e.FileName).HasMaxLength(260);
             entity.Property(e => e.Sha256).HasMaxLength(128);
         });
 
-        modelBuilder.Entity<DownloadResponseFile>(entity =>
+        modelBuilder.Entity<BulkDownloadResponseFile>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__download__3214EC07056EA15F");
 
-            entity.ToTable("download_response_file");
+            entity.ToTable("bulk_download_response_file");
 
-            entity.HasIndex(e => new { e.SourceHash, e.ResponseFileName }, "ix_download_response_file_hash");
+            entity.HasIndex(e => new { e.SourceHash, e.ResponseFileName }, "ix_bulk_download_response_file_hash");
 
             entity.Property(e => e.ClientType).HasMaxLength(1);
             entity.Property(e => e.FiCode).HasMaxLength(6);
@@ -144,13 +146,13 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.Version).HasMaxLength(20);
         });
 
-        modelBuilder.Entity<DownloadResponseLine>(entity =>
+        modelBuilder.Entity<BulkDownloadResponseLine>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__download__3214EC07B53AC933");
 
-            entity.ToTable("download_response_line");
+            entity.ToTable("bulk_download_response_line");
 
-            entity.HasIndex(e => e.DownloadResponseFileId, "ix_download_response_line_file");
+            entity.HasIndex(e => e.DownloadResponseFileId, "ix_bulk_download_response_line_file");
 
             entity.Property(e => e.CkycNumber).HasMaxLength(15);
             entity.Property(e => e.RecordType).HasMaxLength(2);
@@ -433,6 +435,46 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.VideoKycWithoutOfficial).HasMaxLength(1);
         });
 
+        modelBuilder.Entity<IndividualSearch>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK__individu__3214EC07A1B2C3D4");
+
+            entity.ToTable("individual_search");
+
+            entity.HasIndex(e => e.CustomerId, "ix_individual_search_customer");
+
+            entity.HasIndex(e => e.MasterRecordId, "ix_individual_search_master");
+
+            entity.HasIndex(e => new { e.ProcessingStatus, e.Id }, "ix_individual_search_status");
+
+            entity.HasIndex(e => e.ClaimToken, "ix_individual_search_claim");
+
+            entity.Property(e => e.ClaimToken).HasMaxLength(36);
+            entity.Property(e => e.ClientType).HasMaxLength(1);
+            entity.Property(e => e.Constitution).HasMaxLength(1);
+            entity.Property(e => e.CustomerId).HasMaxLength(50);
+            entity.Property(e => e.CkycReferenceNumber).HasMaxLength(15);
+            entity.Property(e => e.DateOfBirth).HasMaxLength(10);
+            entity.Property(e => e.DateOfIncorporation).HasMaxLength(10);
+            entity.Property(e => e.FirstName).HasMaxLength(33);
+            entity.Property(e => e.Gender).HasMaxLength(1);
+            entity.Property(e => e.IdentityTypeAndNumber).HasMaxLength(2000);
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+            entity.Property(e => e.LastName).HasMaxLength(33);
+            entity.Property(e => e.LegalEntityName).HasMaxLength(99);
+            entity.Property(e => e.MiddleName).HasMaxLength(33);
+            entity.Property(e => e.MobileNumber).HasMaxLength(10);
+            entity.Property(e => e.Outcome).HasMaxLength(20);
+            entity.Property(e => e.PhotoReferenceNumber).HasMaxLength(40);
+            entity.Property(e => e.Relation).HasMaxLength(50);
+            entity.Property(e => e.RelationFirstName).HasMaxLength(33);
+            entity.Property(e => e.RelationLastName).HasMaxLength(33);
+            entity.Property(e => e.RelationMiddleName).HasMaxLength(33);
+            entity.Property(e => e.ResponseRemark).HasMaxLength(250);
+            entity.Property(e => e.SearchKey).HasMaxLength(20);
+            entity.Property(e => e.VerifiableCredential).HasMaxLength(50);
+        });
+
         modelBuilder.Entity<LegalEntityDocument>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__legal_en__3214EC0720261F66");
@@ -665,6 +707,7 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.BatchFile).HasMaxLength(260);
             entity.Property(e => e.ClientType).HasMaxLength(1);
             entity.Property(e => e.CustomerId).HasMaxLength(50);
+            entity.Property(e => e.Source).HasMaxLength(20);
             entity.Property(e => e.LastActivity).HasMaxLength(50);
             entity.Property(e => e.LastError).HasMaxLength(1000);
             entity.Property(e => e.LastResponseAckNumber).HasMaxLength(10);
@@ -748,15 +791,15 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.ResponseFileName).HasMaxLength(260);
         });
 
-        modelBuilder.Entity<SearchBatch>(entity =>
+        modelBuilder.Entity<BulkSearchBatch>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__search_b__3214EC07F804FC68");
 
-            entity.ToTable("search_batch");
+            entity.ToTable("bulk_search_batch");
 
-            entity.HasIndex(e => new { e.BusinessDate, e.FileSequence }, "ix_search_batch_date");
+            entity.HasIndex(e => new { e.BusinessDate, e.FileSequence }, "ix_bulk_search_batch_date");
 
-            entity.HasIndex(e => e.FileName, "ix_search_batch_file");
+            entity.HasIndex(e => e.FileName, "ix_bulk_search_batch_file");
 
             entity.Property(e => e.ClaimToken).HasMaxLength(36);
             entity.Property(e => e.Error).HasMaxLength(2000);
@@ -766,17 +809,17 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.FvuZipPath).HasMaxLength(1000);
         });
 
-        modelBuilder.Entity<SearchRequest>(entity =>
+        modelBuilder.Entity<BulkSearchRequest>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__search_r__3214EC07C85B6592");
 
-            entity.ToTable("search_request");
+            entity.ToTable("bulk_search_request");
 
-            entity.HasIndex(e => e.ClaimToken, "ix_search_request_claim");
+            entity.HasIndex(e => e.ClaimToken, "ix_bulk_search_request_claim");
 
-            entity.HasIndex(e => new { e.OutputFileName, e.OutputLineNumber }, "ix_search_request_output");
+            entity.HasIndex(e => new { e.OutputFileName, e.OutputLineNumber }, "ix_bulk_search_request_output");
 
-            entity.HasIndex(e => new { e.ProcessingStatus, e.Id }, "ix_search_request_status");
+            entity.HasIndex(e => new { e.ProcessingStatus, e.Id }, "ix_bulk_search_request_status");
 
             entity.Property(e => e.ClaimToken).HasMaxLength(36);
             entity.Property(e => e.ClientType).HasMaxLength(1);
@@ -806,13 +849,13 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.VerifiableCredential).HasMaxLength(50);
         });
 
-        modelBuilder.Entity<SearchResponse>(entity =>
+        modelBuilder.Entity<BulkSearchResponse>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__search_r__3214EC07A40A0AAC");
 
-            entity.ToTable("search_response");
+            entity.ToTable("bulk_search_response");
 
-            entity.HasIndex(e => e.SearchRequestId, "ix_search_response_request");
+            entity.HasIndex(e => e.SearchRequestId, "ix_bulk_search_response_request");
 
             entity.Property(e => e.AadhaarDocument).HasMaxLength(1);
             entity.Property(e => e.Cin).HasMaxLength(40);
@@ -862,15 +905,15 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.VoterIdDocument).HasMaxLength(1);
         });
 
-        modelBuilder.Entity<SearchResponseFile>(entity =>
+        modelBuilder.Entity<BulkSearchResponseFile>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__search_r__3214EC073AAF45C2");
 
-            entity.ToTable("search_response_file");
+            entity.ToTable("bulk_search_response_file");
 
-            entity.HasIndex(e => e.SearchBatchId, "ix_search_response_file_batch");
+            entity.HasIndex(e => e.SearchBatchId, "ix_bulk_search_response_file_batch");
 
-            entity.HasIndex(e => e.SourceHash, "ix_search_response_file_hash");
+            entity.HasIndex(e => e.SourceHash, "ix_bulk_search_response_file_hash");
 
             entity.Property(e => e.FiCode).HasMaxLength(6);
             entity.Property(e => e.Filler).HasMaxLength(50);

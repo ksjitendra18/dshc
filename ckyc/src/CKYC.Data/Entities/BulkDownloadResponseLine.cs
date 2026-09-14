@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace CKYC.Data.Entities;
 
-public partial class DownloadResponseLine
+public partial class BulkDownloadResponseLine
 {
     public long Id { get; set; }
 

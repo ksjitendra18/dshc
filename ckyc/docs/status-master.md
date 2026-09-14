@@ -1,7 +1,7 @@
 # Status master — `master_record.Status`
 
 Reference lookup for the single "current stage" flag on the `master_record` table.
-Today `Status` is persisted as an **INTEGER** (value 0–10, the `MasterRecordStatus` enum).
+Today `Status` is persisted as an **INTEGER** (value 0–14, the `MasterRecordStatus` enum).
 This doc proposes a **status master** table that maps each value to a short 2–3 char code
 and a proper description, so the flag can be read as `PND`, `CRM`, `SAV`, … without
 changing the underlying numeric storage.
@@ -24,6 +24,10 @@ changing the underlying numeric storage.
 | 8 | RSP | ResponseRead | At least one CERSAI response file has been read for this record. | no |
 | 9 | RCN | Reconciled | Record reconciled (matched/resolved against the CERSAI reply). | yes |
 | 10 | REJ | Rejected | Record permanently rejected by CERSAI. | yes |
+| 11 | DTF | DataFetchFailed | Daily customer-id fetch from the CBS failed; awaiting a retry or manual re-run. | no |
+| 12 | SRP | PendingSearch | Individual details are saved and the record is awaiting the pre-batch customer search. | no |
+| 13 | SRD | Searched | Customer search completed without a match; the API search key is written to record 20 and the record is ready to batch. | no |
+| 14 | SRF | SearchFound | Customer search found an existing CKYC record; the customer already exists and is not pushed through creation again. | yes |
 
 ## Status-master table (DDL)
 
@@ -81,6 +85,9 @@ WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=9);
 INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
 SELECT 10,'REJ','Rejected','Record permanently rejected by CERSAI.',1,1,strftime('%Y-%m-%dT%H:%M:%SZ','now')
 WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=10);
+-- 11 DTF DataFetchFailed, 12 SRP PendingSearch, 13 SRD Searched and 14 SRF SearchFound
+-- are seeded the same way; the authoritative SQL Server seeds live in
+-- scripts/sqlserver/schema.sql (and the add_individual_search migration).
 ```
 
 ## Wiring status

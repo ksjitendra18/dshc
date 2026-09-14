@@ -10,7 +10,7 @@ namespace CKYC.Data;
 
 /// <summary>
 /// EF Core (SQL Server) persistence for the bulk-update pipeline: JSON intake rows,
-/// per-client-type batch claiming (search_request conventions), FVU audit and
+/// per-client-type batch claiming (bulk_search_request conventions), FVU audit and
 /// .UPD.RESm response import.
 /// </summary>
 public sealed class UpdateRepository : IUpdateRepository

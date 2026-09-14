@@ -71,11 +71,11 @@ public sealed class InsertCommand : ICommand
             return 1;
         }
 
-        await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
+        await ctx.Master.UpdateStatusAsync(master.Id, MasterRecordStatus.PendingSearch, save.Summary, null, ct);
 
         Log.Info("[insert] Created '{CustomerId}' ({FirstName} {LastName})", individual.CustomerId, individual.Name.FirstName, individual.Name.LastName);
         Log.Info("[insert]   {Summary}", save.Summary);
-        Log.Info("[insert] Next: `build-zip` then `fvu` to validate and process.");
+        Log.Info("[insert] Next: `search-customer` then `build-zip` and `fvu`.");
         return 0;
     }
 

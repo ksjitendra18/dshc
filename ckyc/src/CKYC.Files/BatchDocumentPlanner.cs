@@ -1,6 +1,8 @@
+using System.Security.Cryptography;
 using System.Text;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
+using CKYC.Core.Models;
 
 namespace CKYC.Files;
 
@@ -20,11 +22,13 @@ internal sealed class BatchDocumentPlanner
     public static async Task<(BatchDocumentPlanner Planner, Dictionary<long, List<string>> Missing)> CreateAsync(
         IDocumentStore store,
         IEnumerable<(long MasterId, string CustomerId, IReadOnlySet<string> References)> records,
+        IReadOnlyList<GeneratedDocument>? generated,
         CancellationToken ct)
     {
         var input = records.ToList();
         var stored = await store.GetByMasterRecordIdsAsync(input.Select(x => x.MasterId).Distinct().ToArray(), ct);
         var documents = stored.ToDictionary(x => (x.MasterRecordId, Canonical(x.OriginalFileName)));
+        OverlayGenerated(documents, generated);
         var missing = new Dictionary<long, List<string>>();
         var resolved = new List<(long MasterId, string CustomerId, string Reference, CustomerDocument Document)>();
 
@@ -40,6 +44,46 @@ internal sealed class BatchDocumentPlanner
         var batchNames = AllocateNames(resolved);
         return (new BatchDocumentPlanner(documents, batchNames), missing);
     }
+
+    /// <summary>
+    /// Overlays batch-time generated documents over their stored counterparts: a generated
+    /// document with the same master + file name wins, so a record always batches the freshly
+    /// rendered version (no stale copy is ever reused).
+    /// </summary>
+    private static void OverlayGenerated(
+        Dictionary<(long, string), CustomerDocument> documents,
+        IReadOnlyList<GeneratedDocument>? generated)
+    {
+        if (generated is null || generated.Count == 0) return;
+        var now = DateTime.UtcNow;
+        foreach (var item in generated)
+        {
+            if (string.IsNullOrWhiteSpace(item.FileName) || item.Content.Length == 0) continue;
+            var sha = Convert.ToHexString(SHA256.HashData(item.Content)).ToLowerInvariant();
+            documents[(item.MasterRecordId, Canonical(item.FileName))] = new CustomerDocument(
+                Id: 0,
+                MasterRecordId: item.MasterRecordId,
+                FileContentId: 0,
+                OriginalFileName: item.FileName,
+                CanonicalFileName: Canonical(item.FileName),
+                MediaType: MediaTypeFor(item.FileName),
+                DocumentKind: item.DocumentKind,
+                SourceType: "Generated",
+                SourceReference: null,
+                Sha256: sha,
+                ByteLength: item.Content.LongLength,
+                Content: item.Content,
+                CreatedAt: now,
+                UpdatedAt: now);
+        }
+    }
+
+    private static string MediaTypeFor(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        _ => "application/octet-stream",
+    };
 
     public string? Map(string customerId, string? fileName) => string.IsNullOrWhiteSpace(fileName)
         ? fileName

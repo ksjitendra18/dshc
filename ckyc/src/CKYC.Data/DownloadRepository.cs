@@ -1,9 +1,9 @@
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using Microsoft.EntityFrameworkCore;
-using DownloadResponseArtifactEntity = CKYC.Data.Entities.DownloadResponseArtifact;
-using DownloadResponseFileEntity = CKYC.Data.Entities.DownloadResponseFile;
-using DownloadResponseLineEntity = CKYC.Data.Entities.DownloadResponseLine;
+using BulkDownloadResponseArtifactEntity = CKYC.Data.Entities.BulkDownloadResponseArtifact;
+using BulkDownloadResponseFileEntity = CKYC.Data.Entities.BulkDownloadResponseFile;
+using BulkDownloadResponseLineEntity = CKYC.Data.Entities.BulkDownloadResponseLine;
 
 namespace CKYC.Data;
 
@@ -21,7 +21,7 @@ public sealed class DownloadRepository : IDownloadRepository
         await db.AcquireTransactionLockAsync(
             $"CKYC:download-response:{response.SourceHash}:{response.ResponseFileName}", ct);
 
-        var duplicate = await db.DownloadResponseFiles
+        var duplicate = await db.BulkDownloadResponseFiles
             .AnyAsync(f => f.SourceHash == response.SourceHash && f.ResponseFileName == response.ResponseFileName, ct);
         if (duplicate)
         {
@@ -30,7 +30,7 @@ public sealed class DownloadRepository : IDownloadRepository
         }
 
         var now = DateTime.UtcNow;
-        var file = new DownloadResponseFileEntity
+        var file = new BulkDownloadResponseFileEntity
         {
             ResponseFileName = response.ResponseFileName,
             ResponseFileNumber = response.ResponseFileNumber,
@@ -45,13 +45,13 @@ public sealed class DownloadRepository : IDownloadRepository
             SourceHash = response.SourceHash,
             CreatedAt = now,
         };
-        db.DownloadResponseFiles.Add(file);
+        db.BulkDownloadResponseFiles.Add(file);
         await db.SaveChangesAsync(ct);
         var fileId = file.Id;
 
         foreach (var line in response.Lines)
         {
-            db.DownloadResponseLines.Add(new DownloadResponseLineEntity
+            db.BulkDownloadResponseLines.Add(new BulkDownloadResponseLineEntity
             {
                 DownloadResponseFileId = fileId,
                 SourceEntryPath = line.SourceEntryPath,
@@ -66,7 +66,7 @@ public sealed class DownloadRepository : IDownloadRepository
 
         foreach (var artifact in response.Artifacts)
         {
-            db.DownloadResponseArtifacts.Add(new DownloadResponseArtifactEntity
+            db.BulkDownloadResponseArtifacts.Add(new BulkDownloadResponseArtifactEntity
             {
                 DownloadResponseFileId = fileId,
                 EntryPath = artifact.EntryPath,

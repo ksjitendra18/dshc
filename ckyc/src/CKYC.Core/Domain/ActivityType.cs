@@ -56,6 +56,7 @@ public static class ActivityTypeCodes
     public const string Crm = "Crm";
     public const string Store = "Store";
     public const string BuildZip = "BuildZip";
+    public const string Search = "Search";
     public const string FvuUpload = "FvuUpload";
     public const string ResponseRead = "Response";
     public const string Reconciliation = "Reconciliation";

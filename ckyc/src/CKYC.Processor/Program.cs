@@ -9,11 +9,12 @@ using AppContext = CKYC.Processor.AppContext;
 //   fetch cust    : step 1  customer ids -> master table (CBS fetch; retryable)
 //   crm serve     : step 2  dummy CRM API
 //   store         : step 3  CRM -> record tables (with simulated error saving)
+//   search-customer : step 4  per-customer search API (found -> end; not found -> record-20 key)
 //   retry         :        retry failed records (per retryable activity, exponential backoff)
 //   reattempt     :        re-push a single rejected record after a backend DB fix
-//   build-zip     : step 4  saved records -> pipe-delimited .UPL + zip
-//   fvu           : step 5  batch -> FVU -> processed zip + hash (marks records Uploaded)
-//   response read : step 6  CERSAI reply (.UPL.RESm) -> response table + master summary
+//   build-zip     : step 5  searched records -> pipe-delimited .UPL + zip
+//   fvu           : step 6  batch -> FVU -> processed zip + hash (marks records Uploaded)
+//   response read : step 7  CERSAI reply (.UPL.RESm) -> response table + master summary
 //   reconcile     :        manual-intervention report (retry-exhausted + CERSAI-failed)
 //   status        :        pipeline snapshot (current stage per record)
 //   search-load/process/fvu/response : individual search JSON -> SRC -> validated SRC.zip -> response tables

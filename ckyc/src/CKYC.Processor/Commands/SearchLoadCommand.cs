@@ -20,7 +20,7 @@ public sealed class SearchLoadCommand : ICommand
         }
         var records = await SearchJsonReader.ReadAsync(path, ct);
         var result = await ctx.Search.InsertAsync(records, ct);
-        Log.Info("[search-load] Inserted {Inserted} of {Total} record(s) into search_request.", result.Inserted, result.Total);
+        Log.Info("[search-load] Inserted {Inserted} of {Total} record(s) into bulk_search_request.", result.Inserted, result.Total);
         return 0;
     }
 }

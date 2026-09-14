@@ -7,6 +7,7 @@ using CKYC.Core.Spec;
 using CKYC.Crm;
 using CKYC.Data;
 using CKYC.Files;
+using CKYC.Files.Documents;
 
 if (args.Length != 1)
     throw new ArgumentException("Pass the retail-customer.json path.");
@@ -160,6 +161,58 @@ catch (InvalidOperationException ex) when (ex.Message.Contains("cannot contain m
 }
 
 Console.WriteLine("All individual create-format specification checks passed.");
+
+// ---- per-channel document generation: Aadhaar + consent for BCE (beckyc), undertaking for every channel ----
+var docFormat = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "doc_format"));
+var generationSettings = new DocumentGenerationSettings
+{
+    Enabled = true,
+    TemplateRoot = docFormat,
+    Documents =
+    {
+        new GeneratedDocumentSettings
+        {
+            Kind = "Static", FileName = "D1.pdf", Template = "Template_1.pdf",
+            Slots = { "declarationDocument" },
+        },
+        new GeneratedDocumentSettings
+        {
+            Kind = "Aadhaar", FileName = "AdhaarAP.pdf", Template = "Aadhaar_template_blank.jpg",
+            Channels = { "beckyc" }, Slots = { "proofOvd", "currentAddressOvd" }, OverlayPhoto = false,
+            FontFamily = "Arial", FontSize = 11, HeadingFontSize = 12, CoordinateWidth = 1095, CoordinateHeight = 1549,
+        },
+        new GeneratedDocumentSettings
+        {
+            Kind = "Consent", FileName = "C3.pdf", Template = "Consent_template_blank.png",
+            Channels = { "beckyc" }, Slots = { "clientConsent" },
+            FontFamily = "Calibri", FontSize = 10, CoordinateWidth = 595.276, CoordinateHeight = 841.89,
+        },
+    },
+};
+var generationService = new DocumentGenerationService(generationSettings, null!);
+
+var bceRecord = Read();
+var bceMaster = new MasterRecord { Id = 5001, CustomerId = bceRecord.CustomerId, Source = MasterRecordSource.Beckyc };
+var bceGenerated = await generationService.GenerateAsync(
+    new Dictionary<string, MasterRecord> { [bceRecord.CustomerId] = bceMaster }, [bceRecord]);
+if (bceGenerated.Warnings.Count != 0 || bceGenerated.Documents.Count != 3)
+    throw new InvalidOperationException($"BCE document generation expected 3 documents without warnings; got {bceGenerated.Documents.Count} ({string.Join("; ", bceGenerated.Warnings)}).");
+if (!bceGenerated.Documents.All(d => d.MasterRecordId == bceMaster.Id && d.Content.Length > 100
+        && d.Content.AsSpan(0, 5).SequenceEqual("%PDF-"u8)))
+    throw new InvalidOperationException("A generated document was empty, was not a PDF, or was attached to the wrong master record.");
+if (!string.Equals(bceRecord.Proofs.Single(p => p.OvdType == "E").CopyOfOvd, "AdhaarAP.pdf", StringComparison.OrdinalIgnoreCase)
+    || bceRecord.Other!.ClientConsent != "C3.pdf" || bceRecord.Other.DeclarationDocument != "D1.pdf")
+    throw new InvalidOperationException("Generated documents did not repoint the record's document slots.");
+
+var appRecord = Read();
+var appMaster = new MasterRecord { Id = 5002, CustomerId = appRecord.CustomerId, Source = MasterRecordSource.App };
+var appGenerated = await generationService.GenerateAsync(
+    new Dictionary<string, MasterRecord> { [appRecord.CustomerId] = appMaster }, [appRecord]);
+if (appGenerated.Documents.Count != 1
+    || !string.Equals(appGenerated.Documents[0].FileName, "D1.pdf", StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("A non-BCE channel must receive only the shared undertaking.");
+
+Console.WriteLine("All document-generation specification checks passed.");
 
 var legalSearch = new SearchRequest
 {

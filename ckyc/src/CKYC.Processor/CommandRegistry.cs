@@ -23,6 +23,7 @@ public sealed class CommandRegistry
             new DocumentsCommand(),
             new CrmServeCommand(),
             new StoreCommand(),
+            new SearchCustomerCommand(),
             new RetryCommand(),
             new ReattemptCommand(),
             new BuildZipCommand(),
@@ -58,6 +59,7 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe fetch cust");
         sb.AppendLine("  CKYCProcessor.exe crm serve");
         sb.AppendLine("  CKYCProcessor.exe store");
+        sb.AppendLine("  CKYCProcessor.exe search-customer");
         sb.AppendLine("  CKYCProcessor.exe retry");
         sb.AppendLine("  CKYCProcessor.exe reattempt --customer CUST202608240001 --reason \"PAN corrected\"");
         sb.AppendLine("  CKYCProcessor.exe build-zip");

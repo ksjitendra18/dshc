@@ -144,10 +144,13 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 & $exe store
 & $exe retry
 
-# 4. build the .UPL + zip from saved records
+# 4. pre-batch customer search (match -> SearchFound; no match -> record-20 search key)
+& $exe search-customer
+
+# 5. build the .UPL + zip from Searched records
 & $exe build-zip
 
-# 5. submit to the FVU -> processed zip + hash
+# 6. submit to the FVU -> processed zip + hash
 & $exe fvu
 
 # inspect
@@ -156,6 +159,10 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 
 `run.ps1` does all of this automatically (it launches the CRM in-process as a background
 job, runs every step, then shuts the CRM down).
+
+> To **skip or remove** the `search-customer` step later, see the README section
+> "Skipping or removing the customer search" (config switch `searchApi.enabled`, a bulk SQL
+> shortcut, and the exact code changes to remove the step entirely).
 
 ---
 
@@ -204,7 +211,7 @@ JSON and plain-text (one id per line) files are both supported; a `.json` file i
 JSON, anything else is read line-by-line.
 
 After `fetch`, run the rest as usual:
-`store` → `retry` → `build-zip` → `fvu` → `status`.
+`store` → `retry` → `search-customer` → `build-zip` → `fvu` → `status`.
 
 ---
 
@@ -220,9 +227,10 @@ Instead of the dummy CRM's auto-data, you can supply a full record:
 ```
 
 Missing detail records (proof/address/contact/related/other) are filled with FVU-valid
-defaults, so a minimal input still produces a batch. `build-zip` batches currently-`Saved`
-records, so a freshly inserted record is batched on its own even when older records are
-already `FvuPassed`.
+defaults, so a minimal input still produces a batch. The inserted record becomes `PendingSearch`;
+`search-customer` resolves it to `Searched` (no match — search key written to record 20) or
+`SearchFound` (already exists), and `build-zip` batches the `Searched` records, so a freshly
+inserted record is batched on its own even when older records are already `FvuPassed`.
 
 Keep values FVU-valid: country code `IN`, dates `DD-MM-YYYY`, and a 20-character search key.
 After inserting the record, import every referenced document from a staging directory:
@@ -328,4 +336,5 @@ Generated + processed artifacts live under:
 | `fvu` exits `-1` with empty tmp                     | The PyInstaller bundle couldn't write to temp (sandbox). Run with broader access, or set `fvu.useRealFvu=false`.    |
 | `fvu` exits `3`                                     | A generated `.UPL` field failed validation. Check the per-run `.ERR` file / validation errors.                       |
 | No `Pending` records in `store`                    | `fetch` didn't load ids. Run `fetch cust` / `fetch custid` first.                                                    |
-| A record stays `Saved` and is never batched        | `build-zip` only batches `Saved` records. Ensure the record reached `Saved` (run `store`).                           |
+| A record stays `Saved` and is never batched        | `build-zip` batches `Searched` records (legal entities: `Saved`). Run `search-customer` after `store`.               |
+| A record stays `PendingSearch` and is not batched  | `store`/`insert` leave individuals in `PendingSearch`. Run `search-customer` (or set `searchApi.enabled=false`).    |

@@ -3,6 +3,7 @@ using CKYC.Core.Configuration;
 using CKYC.Crm;
 using CKYC.Data;
 using CKYC.Files;
+using CKYC.Files.Documents;
 using CKYC.Fvu;
 
 namespace CKYC.Processor;
@@ -25,6 +26,7 @@ public sealed class AppContext
         LegalEntities = new LegalEntityRepository(Database);
         Journal = new BatchJournal(Database);
         Search = new SearchRepository(Database);
+        IndividualSearches = new IndividualSearchRepository(Database);
         Updates = new UpdateRepository(Database);
         Downloads = new DownloadRepository(Database);
         IndividualDocuments = new IndividualDocumentStore(Database);
@@ -36,9 +38,14 @@ public sealed class AppContext
         Crm = new HttpCrmApiClient(settings.Crm);
         CrmServer = new CrmServer(CrmData, CustomerIds);
 
+        SearchApi = string.Equals(settings.SearchApi.Mode, "Http", StringComparison.OrdinalIgnoreCase)
+            ? new HttpIndividualSearchApiClient(settings.SearchApi)
+            : new DummyIndividualSearchApi(settings.SearchApi);
+
         Hasher = new FileHasher();
         BatchGenerator = new CkycBatchGenerator(settings.Batch, Hasher, Documents);
         LegalEntityBatchGenerator = new CkycLegalEntityBatchGenerator(settings.Batch, Hasher, Documents);
+        DocumentGeneration = new DocumentGenerationService(settings.DocumentGeneration, Documents);
         SearchFileWriter = new CkycSearchWriter(settings.Search);
         IndividualUpdateWriter = new CkycIndividualUpdateWriter(settings.Update);
         LegalEntityUpdateWriter = new CkycLegalEntityUpdateWriter(settings.Update);
@@ -53,6 +60,7 @@ public sealed class AppContext
     public ILegalEntityRepository LegalEntities { get; }
     public IBatchJournal Journal { get; }
     public ISearchRepository Search { get; }
+    public IIndividualSearchRepository IndividualSearches { get; }
     public IUpdateRepository Updates { get; }
     public IDownloadRepository Downloads { get; }
     /// <summary>Per-client-type document stores. Documents routes to the individual store (default view).</summary>
@@ -64,10 +72,14 @@ public sealed class AppContext
     public DummyCrmLegalEntityProvider CrmLegalEntities { get; }
     public ICrmApiClient Crm { get; }
     public CrmServer CrmServer { get; }
+    /// <summary>Customer-search API client (customer-search step, before batching).</summary>
+    public IIndividualSearchApiClient SearchApi { get; }
 
     public IFileHasher Hasher { get; }
     public IBatchGenerator BatchGenerator { get; }
     public ILegalEntityBatchGenerator LegalEntityBatchGenerator { get; }
+    /// <summary>Renders per-channel supporting documents (Aadhaar/consent/undertaking) at batch time.</summary>
+    public DocumentGenerationService DocumentGeneration { get; }
     public ISearchFileWriter SearchFileWriter { get; }
     public CkycIndividualUpdateWriter IndividualUpdateWriter { get; }
     public CkycLegalEntityUpdateWriter LegalEntityUpdateWriter { get; }

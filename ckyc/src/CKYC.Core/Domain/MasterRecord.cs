@@ -19,6 +19,8 @@ public sealed class MasterRecord
     public string CustomerId { get; set; } = string.Empty;
     /// <summary>I for an individual/retail customer, L for a legal entity.</summary>
     public string ClientType { get; set; } = "I";
+    /// <summary>Intake channel this record originated from (app / beckyc).</summary>
+    public MasterRecordSource Source { get; set; } = MasterRecordSource.Beckyc;
     public DateTime BusinessDate { get; set; }
     public MasterRecordStatus Status { get; set; } = MasterRecordStatus.Pending;
     /// <summary>

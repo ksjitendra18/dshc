@@ -3,9 +3,11 @@ using System.Collections.Generic;
 
 namespace CKYC.Data.Entities;
 
-public partial class DownloadResponseFile
+public partial class BulkSearchResponseFile
 {
     public long Id { get; set; }
+
+    public long? SearchBatchId { get; set; }
 
     public string? ResponseFileName { get; set; }
 
@@ -15,13 +17,17 @@ public partial class DownloadResponseFile
 
     public string? RegionCode { get; set; }
 
-    public string? ClientType { get; set; }
-
     public int? TotalRecords { get; set; }
 
-    public string? Version { get; set; }
+    public int? TotalProcessed { get; set; }
 
-    public string? ResponseDate { get; set; }
+    public int? RecordsUnderProcessing { get; set; }
+
+    public int? RecordsFailed { get; set; }
+
+    public string? ResponseTimestamp { get; set; }
+
+    public string? Filler { get; set; }
 
     public string? RawHeaderData { get; set; }
 

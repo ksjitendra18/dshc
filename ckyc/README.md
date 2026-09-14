@@ -10,12 +10,13 @@ CKYCProcessor.exe fetch cust     # 1. customer ids   -> master table (CBS fetch;
 CKYCProcessor.exe insert         #    create a NEW customer record (manual details)
 CKYCProcessor.exe crm serve      # 2. dummy CRM API         (replace with production)
 CKYCProcessor.exe store          # 3. CRM -> record tables  (with simulated error saving)
+CKYCProcessor.exe search-customer # 4. per-customer search API (match -> end; else record-20 key)
 CKYCProcessor.exe retry          #    retry failed records (exponential backoff, max 3 tries)
 CKYCProcessor.exe reattempt      #    re-push a single rejected record after a backend DB fix
 CKYCProcessor.exe documents import --customer-id <id> --dir <path> # supporting files -> database
-CKYCProcessor.exe build-zip      # 4. saved records -> .UPL file + zip
-CKYCProcessor.exe fvu            # 5. batch -> FVU -> processed zip + hash
-CKYCProcessor.exe response read  # 6. CERSAI reply (.UPL.RESm) -> response table + master summary
+CKYCProcessor.exe build-zip      # 5. searched records -> .UPL file + zip
+CKYCProcessor.exe fvu            # 6. batch -> FVU -> processed zip + hash
+CKYCProcessor.exe response read  # 7. CERSAI reply (.UPL.RESm) -> response table + master summary
 CKYCProcessor.exe reconcile      #    manual-intervention report (retry-exhausted + CERSAI-failed)
 CKYCProcessor.exe status         #    pipeline snapshot (current stage per record)
 CKYCProcessor.exe search-load search_customer.json # search JSON -> pending request rows
@@ -62,8 +63,10 @@ and foreign keys so document content cannot be orphaned or ambiguously assigned.
 database with `scripts/sqlserver/schema.sql`; application startup verifies the schema but does
 not run production DDL.
 
-- `master_record` — step 1: daily customer ids + a **single current-stage** `Status`
-  (Pending → CrmFetched → Saved → Batched → Uploaded → ResponseRead → Reconciled/Rejected),
+- `master_record` — step 1: daily customer ids + the intake channel it came from
+  (`Source`: `app` / `beckyc`), a **single current-stage** `Status`
+  (Pending → CrmFetched → PendingSearch → Searched → Batched → Uploaded → ResponseRead →
+  Reconciled/Rejected, or SearchFound when the customer already exists in CKYC),
   per-stage `Is*`/`*At` flags and timestamps, `Remarks`, `RetryCount` / `LastError` /
   `LastAttemptAt`, the batch file + record-20 line, the latest CERSAI reply summary
   (`LastResponse*`), and reconciliation fields (`ReconStatus`/`ReconRemarks`).
@@ -84,15 +87,20 @@ not run production DDL.
   snapshotting the previous response (status, ack, CKYC ref/number, rejection remark and the
   read date/timestamp) together with the reset flag state.
 - `individual_record_20` … `individual_record_70` — individual record types 20–70.
+- `individual_search` — the **pre-batch customer search**: one row per candidate search
+  request built from the details held for the customer (a record-30 OVD + record-20 PAN each
+  get an option-1 row, plus a name/DOB/gender/relation option-2 fallback). Each row carries the
+  request fields and the API result (`Outcome` Found/NotFound/Error/Skipped, the 20-char
+  `SearchKey`, the `CkycReferenceNumber`, remark and raw response). One customer can have many rows.
 - `legal_entity_record_20` … `legal_entity_record_70` — legal-entity record types 20–70.
 - `file_content` — globally SHA-256-deduplicated PDF/JPEG bytes.
 - `individual_document` / `legal_entity_document` — a customer/master-record filename mapped to content, MIME type,
   source metadata, and import timestamps.
 - `batch`, `fvu_run` — audit trail of generated batches and FVU runs.
-- `search_request` — vendor individual-search request fields plus the pending/processing/
+- `bulk_search_request` — vendor individual-search request fields plus the pending/processing/
   generated/failed flag, claim token, output filename and record-20 line number.
-- `search_batch` — daily `.SRC` sequence allocation and generated-file audit.
-- `search_response_file`, `search_response` — the response header and request-linked
+- `bulk_search_batch` — daily `.SRC` sequence allocation and generated-file audit.
+- `bulk_search_response_file`, `bulk_search_response` — the response header and request-linked
   `.SRC.RESm` detail fields defined by `vendor/individual-format-search.xlsx` (ready for
   response ingestion).
 - `update_request`, `update_batch` — bulk-update intake rows (existing CKYC number + raw JSON)
@@ -118,7 +126,156 @@ being batched. `build-zip` materializes database bytes into its generated `suppo
 folder. If different customers use the same filename for different content, batch-only names
 are generated deterministically without changing stored record fields.
 
-### Individual search process
+### Generated supporting documents (per-channel)
+
+Some intake channels require supporting documents that are *derived* from the record rather
+than captured as an uploaded file. During `build-zip` the processor can render those documents
+from templates and inject them straight into the batch's `support_docs` — no separate import
+step, and nothing is written to the document database (a batch is always rendered from current
+record data).
+
+This is configured under `documentGeneration`:
+
+```json
+"documentGeneration": {
+  "enabled": true,
+  "templateRoot": "doc_format",
+  "documents": [
+    { "kind": "Static",  "fileName": "D1.pdf",       "template": "Template_1.pdf",
+      "slots": [ "declarationDocument" ] },
+    { "kind": "Aadhaar", "channels": [ "beckyc" ],   "fileName": "AdhaarAP.pdf",
+      "template": "Aadhaar_template_blank.jpg", "slots": [ "proofOvd", "currentAddressOvd" ],
+      "fontFamily": "Arial", "fontSize": 11, "headingFontSize": 12,
+      "coordinateWidth": 1095, "coordinateHeight": 1549, "overlayPhoto": true },
+    { "kind": "Consent", "channels": [ "beckyc" ],   "fileName": "C3.pdf",
+      "template": "Consent_template_blank.png", "slots": [ "clientConsent" ],
+      "fontFamily": "Calibri", "fontSize": 10,
+      "coordinateWidth": 595.276, "coordinateHeight": 841.89 }
+  ]
+}
+```
+
+* **`kind`** — `Static` attaches the template unchanged (used for the shared undertaking);
+  `Aadhaar` renders the EKYC report; `Consent` renders the Annexure-1 client-consent declaration.
+* **`channels`** — the intake channels (`master_record.Source`, e.g. `app` / `beckyc`) the
+  document applies to. The task's **BCE channel is the existing `beckyc` channel**. An empty list
+  applies to every channel — so the undertaking is attached for all channels, while the Aadhaar
+  and consent are currently rendered only for `beckyc`.
+* **`fileName` / `slots`** — the generated document is published under `fileName`, and each
+  configured record document slot is repointed at it before the batch is written (the same slots
+  `DocumentReferences.For(record)` collects). Supported slots: `proofOvd`, `permanentAddressOvd`,
+  `currentAddressOvd`, `photoOfIndividual`, `panDocument`, `clientConsent`, `declarationDocument`.
+* **`templateRoot`** — folder holding the templates; a relative path resolves against the process
+  working directory (so run the processor from the folder that contains `doc_format`, or set an
+  absolute path).
+
+Generation is pixel-targeted at the supplied templates and the values are emitted as **real
+vector text** (QuestPDF, community/MIT licence), so the documents stay crisp for OCR and their
+values are also selectable text. The `Aadhaar` renderer overlays the customer's referenced photo
+(contained and centred in the printed frame); set `overlayPhoto` to `false` to keep the template
+photo. The committed derived assets `doc_format/Aadhaar_template_blank.jpg` and
+`doc_format/Consent_template_blank.png` are size-optimised copies of the supplied samples (the
+consent PDF rasterised once), keeping each customer's supporting documents within the 500 KB
+batch limit. Set `documentGeneration.enabled` to `false` to restore the previous batch behaviour.
+
+> **Note:** generation mutates the in-memory record's document fields so the generated name is
+> written to the `.UPL` and packaged in the zip; the stored record rows are not modified.
+> Re-running `build-zip` re-renders from the latest record data.
+
+### Customer search process (pre-batch, individual)
+
+Once an individual record's details are stored, it must be checked against CKYCR before it can
+be batched. `store` leaves each record in **PendingSearch (`SRP`)**, then `search-customer`:
+builds the per-customer candidate rows in `individual_search` (one option-1 row per identity
+document held + a name/DOB/gender/relation option-2 fallback), calls the search API for each
+until one matches, and resolves the record:
+
+* **match found** → the customer already has a CKYC record; the reference number is stored on
+  the master row and the record becomes **SearchFound (`SRF`)** — terminal, it is **not** batched;
+* **no match** → the 20-character search key returned by the API is written into
+  `individual_record_20.SearchKey` and the record becomes **Searched (`SRD`)**, ready to batch.
+
+```powershell
+dotnet run --project src/CKYC.Processor -- search-customer --limit 1000
+dotnet run --project src/CKYC.Processor -- search-customer --customer CUST202608240001
+```
+
+The search client is selected by `searchApi.mode`: `InProcess` (default) uses the deterministic
+`DummyIndividualSearchApi` simulator (every `searchApi.simulateFoundEvery`-th customer by a
+stable hash is "found"; the rest return a search key), while `Http` points
+`HttpIndividualSearchApiClient` at the real endpoint. A failed call is recorded as a retryable
+`Search` activity, so `retry` re-runs it with the standard exponential backoff.
+
+### Skipping or removing the customer search
+
+The search step is self-contained, so it can be switched off or removed without touching the
+record tables, the batch writer or the CERSAI flow.
+
+#### Skip it temporarily (config)
+
+Set `searchApi.enabled` to `false` in `appsettings.json` (or a `--settings` override; a
+ready-made one is in `samples/settings-search-skip.json`):
+
+```json
+{ "searchApi": { "enabled": false } }
+```
+
+```powershell
+CKYCProcessor.exe search-customer --settings samples/settings-search-skip.json
+```
+
+`search-customer` then runs as a pass-through:
+
+* no API call is made and **no `individual_search` rows are built**;
+* every record in PendingSearch (`SRP`) is moved straight to Searched (`SRD`);
+* the record-20 search key is kept as-is (a deterministic 20-character key is generated only
+  if it is missing), so `build-zip` continues to work unchanged.
+
+Everything else (`store`, `insert`, `build-zip`, `fvu`, …) is unchanged, and records still move
+`SRP → SRD`. Flip `enabled` back to `true` to resume real searching. No migration is needed.
+
+To force a re-search of a record that already resolved, run
+`search-customer --customer <id>` (it processes the record regardless of its current status),
+or reset it to PendingSearch first:
+
+```sql
+UPDATE master_record SET Status = 12, StatusCode = 'SRP' WHERE CustomerId = 'CUST...';
+```
+
+#### Bulk-skip existing records (SQL, no config change)
+
+If search must be bypassed for records already sitting in PendingSearch, move them directly to
+the batch-ready state (`build-zip` picks up `SRD`):
+
+```sql
+UPDATE master_record SET Status = 13, StatusCode = 'SRD'
+WHERE ClientType = 'I' AND Status = 12;
+```
+
+`individual_search` rows are optional for batching, so no cleanup is required.
+
+#### Remove it permanently
+
+The search is additive. To return to the pre-search behaviour, make these code changes (step 6
+is optional cleanup — the schema change is not required for the flow to work):
+
+1. `StoreService` — restore `MasterRecordStatus.Saved` (instead of `PendingSearch`) once the
+   details are saved.
+2. `InsertCommand` — restore `MasterRecordStatus.Saved`.
+3. `MasterRepository.ResetForReattemptAsync` — always reset to `Saved` (drop the ClientType branch).
+4. `BuildZipCommand` — query `MasterRecordStatus.Saved` again.
+5. `CommandRegistry` / `Program` — remove `SearchCustomerCommand` from the registry.
+6. (Optional) drop the table and seed rows:
+   ```sql
+   DROP TABLE individual_search;
+   DELETE FROM status_master WHERE StatusValue IN (12, 13, 14);
+   DELETE FROM activity_type WHERE Code = 'Search';
+   ```
+
+Leaving the table, statuses and activity in place is harmless — they are append-only and simply
+unused once the command is removed, so existing databases never need renumbering.
+
+### Individual search file process (vendor SRC)
 
 Put the input at `search_customer.json` (an example is in `samples/search_customer.json`),
 then run:
@@ -142,8 +299,8 @@ only after a successful validation, creates a sibling `.SRC.zip` file. The batch
 as validated (`4`) or FVU-failed (`5`), together with the FVU output path, hash and error.
 
 Place a plain `.SRC.RESm` file or its response ZIP in `runtime/search/response`, then run
-`search-response`. It stores record-10 in `search_response_file`, all record-20 lines in
-`search_response`, and updates the matching `search_request` rows using the original SRC
+`search-response`. It stores record-10 in `bulk_search_response_file`, all record-20 lines in
+`bulk_search_response`, and updates the matching `bulk_search_request` rows using the original SRC
 filename and input record line number. Re-running the same archive is safe: its SHA-256 is
 used to prevent duplicate imports.
 
@@ -339,6 +496,11 @@ Configuration lives in `appsettings.json` (JSON). Key sections:
   `cbsFetchFailForCustomerId`) that makes the fetch fail for a subset of ids.
 - `retry` — default retry policy used to seed `activity_type`: `maxAttempts` (3),
   `backoffBaseHours` (24), `backoffMultiplier` (2.0).
+- `search` — vendor bulk-search (`.SRC`) file naming/output settings.
+- `searchApi` — pre-batch customer search: `enabled` (set false to **skip** the step),
+  `mode` (`InProcess` simulator / `Http` real endpoint), `baseUrl`, `searchEndpoint`,
+  `timeoutSeconds`, `claimTimeoutMinutes`, `simulateFoundEvery`, plus the failure-simulation
+  knobs `simulateErrorsEnabled`, `simulateErrorEvery`, `simulateErrorForCustomerId`.
 
 ---
 
@@ -373,13 +535,16 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 & $exe store
 & $exe retry
 
-# 4. generate the batch (.UPL + zip) from saved records
+# 4. pre-batch customer search: match -> SearchFound (ends); no match -> record-20 search key
+& $exe search-customer
+
+# 5. generate the batch (.UPL + zip) from Searched records
 & $exe build-zip
 
-# 5. submit to the FVU -> processed zip + hash (records become Uploaded / pending at CERSAI)
+# 6. submit to the FVU -> processed zip + hash (records become Uploaded / pending at CERSAI)
 & $exe fvu
 
-# 6. read the CERSAI reply (records advance to ResponseRead / Reconciled / Rejected)
+# 7. read the CERSAI reply (records advance to ResponseRead / Reconciled / Rejected)
 & $exe response read
 
 # inspect
@@ -410,8 +575,9 @@ step:
    # or fully inline:
    & $exe insert --customer-id CUST202608240099 --name "Ashish Kumar" --dob 15-04-1988 --gender M --email ashish.kumar@yopmail.com --mobile 9876543210
    ```
-4. Generate the batch and submit to the FVU:
+4. Run the pre-batch search, generate the batch and submit to the FVU:
    ```powershell
+   & $exe search-customer
    & $exe build-zip
    & $exe fvu
    ```
@@ -421,9 +587,10 @@ step:
    ```
 
 Notes:
-- The inserted record becomes `Saved`; `build-zip` batches **currently-Saved** records, so a
-  freshly inserted record is batched on its own even when older records are already
-  `FvuPassed`.
+- The inserted record becomes `PendingSearch`; `search-customer` resolves it to `Searched`
+  (no match — search key written to record 20) or `SearchFound` (already exists), and only
+  `Searched` records are batched. So a freshly inserted record is batched on its own even when
+  older records are already `FvuPassed`.
 - Keep values FVU-valid: country code `IN`, dates `DD-MM-YYYY`, a 20-character search key,
   and an existing referencing document file in `support_docs`.
 

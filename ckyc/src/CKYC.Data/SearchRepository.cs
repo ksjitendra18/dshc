@@ -1,10 +1,10 @@
 using CKYC.Core.Abstractions;
 using CKYC.Core.Domain;
 using Microsoft.EntityFrameworkCore;
-using SearchBatchEntity = CKYC.Data.Entities.SearchBatch;
-using SearchRequestEntity = CKYC.Data.Entities.SearchRequest;
-using SearchResponseEntity = CKYC.Data.Entities.SearchResponse;
-using SearchResponseFileEntity = CKYC.Data.Entities.SearchResponseFile;
+using BulkSearchBatchEntity = CKYC.Data.Entities.BulkSearchBatch;
+using BulkSearchRequestEntity = CKYC.Data.Entities.BulkSearchRequest;
+using BulkSearchResponseEntity = CKYC.Data.Entities.BulkSearchResponse;
+using BulkSearchResponseFileEntity = CKYC.Data.Entities.BulkSearchResponseFile;
 
 namespace CKYC.Data;
 
@@ -22,7 +22,7 @@ public sealed class SearchRepository : ISearchRepository
         var now = DateTime.UtcNow;
         foreach (var request in requests)
         {
-            db.SearchRequests.Add(new SearchRequestEntity
+            db.BulkSearchRequests.Add(new BulkSearchRequestEntity
             {
                 ExternalRequestId = request.ExternalRequestId,
                 CustomerId = request.CustomerId,
@@ -68,7 +68,7 @@ public sealed class SearchRepository : ISearchRepository
 
         // The transaction-scoped SQL Server application lock serializes the short claim and
         // daily-sequence allocation window across processes.
-        var claimIds = await db.SearchRequests
+        var claimIds = await db.BulkSearchRequests
             .Where(r => r.ProcessingStatus == 0 || (r.ProcessingStatus == 1 && r.ClaimedAt < staleBefore))
             .OrderBy(r => r.Id).Take(limit)
             .Select(r => r.Id)
@@ -79,7 +79,7 @@ public sealed class SearchRepository : ISearchRepository
             return null;
         }
 
-        await db.SearchRequests
+        await db.BulkSearchRequests
             .Where(r => claimIds.Contains(r.Id))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ProcessingStatus, 1)
@@ -89,13 +89,13 @@ public sealed class SearchRepository : ISearchRepository
                 .SetProperty(r => r.UpdatedAt, now), ct);
 
         var sequence = sequenceStart;
-        var maxSequence = await db.SearchBatches
+        var maxSequence = await db.BulkSearchBatches
             .Where(b => b.BusinessDate == businessDate)
             .MaxAsync(b => (int?)b.FileSequence, ct);
         if (maxSequence is not null) sequence = Math.Max(sequenceStart, maxSequence.Value + 1);
 
         var records = await ReadClaimAsync(db, token, ct);
-        db.SearchBatches.Add(new SearchBatchEntity
+        db.BulkSearchBatches.Add(new BulkSearchBatchEntity
         {
             BusinessDate = businessDate,
             FileSequence = sequence,
@@ -117,7 +117,7 @@ public sealed class SearchRepository : ISearchRepository
         var lineById = claim.Records.Select((record, index) => (record.Id, Line: index + 1))
             .ToDictionary(item => item.Id, item => item.Line);
         var claimIds = lineById.Keys.ToList();
-        var requests = await db.SearchRequests
+        var requests = await db.BulkSearchRequests
             .Where(r => claimIds.Contains(r.Id) && r.ClaimToken == claim.Token && r.ProcessingStatus == 1)
             .ToListAsync(ct);
         foreach (var request in requests)
@@ -129,7 +129,7 @@ public sealed class SearchRepository : ISearchRepository
             request.UpdatedAt = now;
         }
         await db.SaveChangesAsync(ct);
-        await db.SearchBatches
+        await db.BulkSearchBatches
             .Where(b => b.ClaimToken == claim.Token)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(b => b.Status, 2)
@@ -144,13 +144,13 @@ public sealed class SearchRepository : ISearchRepository
         await using var db = _db.CreateContext();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = DateTime.UtcNow;
-        await db.SearchRequests
+        await db.BulkSearchRequests
             .Where(r => r.ClaimToken == claim.Token && r.ProcessingStatus == 1)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ProcessingStatus, 3)
                 .SetProperty(r => r.LastError, failureMessage)
                 .SetProperty(r => r.UpdatedAt, now), ct);
-        await db.SearchBatches
+        await db.BulkSearchBatches
             .Where(b => b.ClaimToken == claim.Token)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(b => b.Status, 3)
@@ -162,7 +162,7 @@ public sealed class SearchRepository : ISearchRepository
     public async Task<SearchGeneratedBatch?> GetGeneratedBatchAsync(string? fileName, CancellationToken ct = default)
     {
         await using var db = _db.CreateContext();
-        var query = db.SearchBatches.AsNoTracking().Where(b => b.Status == 2);
+        var query = db.BulkSearchBatches.AsNoTracking().Where(b => b.Status == 2);
         if (fileName is not null) query = query.Where(b => b.FileName == fileName);
         var batch = await query.OrderByDescending(b => b.Id).FirstOrDefaultAsync(ct);
         if (batch is null) return null;
@@ -173,7 +173,7 @@ public sealed class SearchRepository : ISearchRepository
     public async Task RecordFvuAsync(long batchId, bool passed, string? zipPath, string? hash, string? failureMessage, CancellationToken ct = default)
     {
         await using var db = _db.CreateContext();
-        await db.SearchBatches
+        await db.BulkSearchBatches
             .Where(b => b.Id == batchId)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(b => b.Status, passed ? 4 : 5)
@@ -189,21 +189,21 @@ public sealed class SearchRepository : ISearchRepository
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.AcquireTransactionLockAsync($"CKYC:search-response:{response.SourceHash}", ct);
 
-        var duplicate = await db.SearchResponseFiles.AnyAsync(f => f.SourceHash == response.SourceHash, ct);
+        var duplicate = await db.BulkSearchResponseFiles.AnyAsync(f => f.SourceHash == response.SourceHash, ct);
         if (duplicate)
         {
             await tx.RollbackAsync(ct);
             return new SearchResponseImportResult(0, 0, true);
         }
 
-        var searchBatchId = await db.SearchBatches
+        var searchBatchId = await db.BulkSearchBatches
             .Where(b => b.FileName == response.InputFileName)
             .OrderByDescending(b => b.Id)
             .Select(b => (long?)b.Id)
             .FirstOrDefaultAsync(ct);
 
         var now = DateTime.UtcNow;
-        db.SearchResponseFiles.Add(new SearchResponseFileEntity
+        db.BulkSearchResponseFiles.Add(new BulkSearchResponseFileEntity
         {
             SearchBatchId = searchBatchId,
             ResponseFileName = response.Header.ResponseFileName,
@@ -224,7 +224,7 @@ public sealed class SearchRepository : ISearchRepository
         var responseLines = response.Details
             .Where(d => d.InputRecordLineNumber is not null)
             .Select(d => d.InputRecordLineNumber!.Value).Distinct().ToList();
-        var matchedRequests = await db.SearchRequests
+        var matchedRequests = await db.BulkSearchRequests
             .Where(r => r.OutputFileName == response.InputFileName
                      && r.OutputLineNumber != null && responseLines.Contains(r.OutputLineNumber.Value))
             .ToListAsync(ct);
@@ -238,7 +238,7 @@ public sealed class SearchRepository : ISearchRepository
                 && requestByLine.TryGetValue(detail.InputRecordLineNumber.Value, out var found) ? found : null;
             long? requestId = request?.Id;
 
-            db.SearchResponses.Add(new SearchResponseEntity
+            db.BulkSearchResponses.Add(new BulkSearchResponseEntity
             {
                 SearchRequestId = requestId,
                 ResponseFileName = response.Header.ResponseFileName,
@@ -311,7 +311,7 @@ public sealed class SearchRepository : ISearchRepository
 
     private static async Task<List<SearchRequest>> ReadClaimAsync(CkycDbContext db, string token, CancellationToken ct)
     {
-        var rows = await db.SearchRequests.AsNoTracking()
+        var rows = await db.BulkSearchRequests.AsNoTracking()
             .Where(r => r.ClaimToken == token)
             .OrderBy(r => r.Id)
             .ToListAsync(ct);

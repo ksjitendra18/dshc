@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace CKYC.Data.Entities;
 
-public partial class SearchResponse
+public partial class BulkSearchResponse
 {
     public long Id { get; set; }
 

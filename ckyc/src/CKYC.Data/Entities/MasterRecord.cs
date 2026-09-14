@@ -11,6 +11,8 @@ public partial class MasterRecord
 
     public string? ClientType { get; set; }
 
+    public string? Source { get; set; }
+
     public DateOnly? BusinessDate { get; set; }
 
     public int? Status { get; set; }

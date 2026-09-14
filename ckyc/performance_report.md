@@ -115,7 +115,7 @@ under concurrent workers and doubles round-trips:
 
 Even sequentially, each is a wasted SELECT. **Fix:** add the unique index
 (`upload_response_file(SourceHash,ResponseFileName)` already has an index — make it
-`UNIQUE`; same for `download_response_file` hash pair and `search_response_file(SourceHash)`)
+`UNIQUE`; same for `bulk_download_response_file` hash pair and `bulk_search_response_file(SourceHash)`)
 and use `INSERT OR IGNORE` / `INSERT ... ON CONFLICT DO UPDATE` — one statement, atomic.
 
 #### 🟠 D4 — `AddResponseAsync` DELETE-then-INSERT for idempotency

@@ -104,6 +104,18 @@ public sealed class IndividualRepository : IIndividualRepository
         return result;
     }
 
+    public async Task<bool> UpdateSearchKeyAsync(long masterRecordId, string searchKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(searchKey)) return false;
+        var now = DateTime.UtcNow;
+        await using var db = _db.CreateContext();
+        return await db.IndividualRecord20s
+            .Where(r => r.MasterRecordId == masterRecordId)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.SearchKey, searchKey)
+                .SetProperty(r => r.UpdatedAt, now), ct) > 0;
+    }
+
     private static Individual ReadRecord20(IndividualRecord20Entity r) => new()
     {
         Id = r.Id,

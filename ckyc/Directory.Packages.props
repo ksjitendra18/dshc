@@ -10,5 +10,6 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.10" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10" />
     <PackageVersion Include="NLog" Version="6.1.4" />
+    <PackageVersion Include="QuestPDF" Version="2025.1.0" />
   </ItemGroup>
 </Project>

@@ -82,6 +82,9 @@ public sealed class RetryService
                 return new RetryOutcome(false, PermanentFailure: exhausted);
             }
 
+            case ActivityTypeCodes.Search:
+                return await RunSearchRetryAsync(ctx, activity, rec, ct);
+
             case ActivityTypeCodes.CbsFetch:
                 return await RunCbsFetchRetryAsync(ctx, activity, rec, ct);
 
@@ -91,6 +94,28 @@ public sealed class RetryService
                     $"[{activity.Code}] not auto-retryable; manual intervention required", ct);
                 return new RetryOutcome(false, PermanentFailure: true);
         }
+    }
+
+    private static async Task<RetryOutcome> RunSearchRetryAsync(AppContext ctx, ActivityType activity, MasterRecord rec, CancellationToken ct)
+    {
+        // Put the record back into the searchable state and re-run the customer search
+        // (already-built rows that failed are re-attempted).
+        await ctx.Master.UpdateStatusAsync(rec.Id, MasterRecordStatus.PendingSearch,
+            $"Customer search retry on attempt {rec.RetryCount + 1}", null, ct);
+
+        var service = new IndividualSearchService(ctx);
+        var outcome = await service.ProcessAsync(rec, ct);
+        if (outcome is MasterRecordStatus.Searched or MasterRecordStatus.SearchFound)
+        {
+            await ctx.Master.ClearRetryStateAsync(rec.Id, ct);
+            Log.Info("[retry]   {CustomerId}: customer search re-attempted -> {Status}", rec.CustomerId, outcome.Label());
+            return new RetryOutcome(true);
+        }
+
+        var refreshed = await ctx.Master.GetByIdAsync(rec.Id, ct);
+        var exhausted = refreshed is null || refreshed.NeedsReconcile
+                        || refreshed.RetryCount >= activity.MaxAttempts;
+        return new RetryOutcome(false, PermanentFailure: exhausted);
     }
 
     private static async Task<RetryOutcome> RunCbsFetchRetryAsync(AppContext ctx, ActivityType activity, MasterRecord rec, CancellationToken ct)

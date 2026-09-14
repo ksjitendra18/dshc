@@ -56,10 +56,11 @@ public sealed class StoreService
                     continue;
                 }
 
-                await _ctx.Master.UpdateStatusAsync(record.Id, MasterRecordStatus.Saved, save.Summary, null, ct);
-                await LogAttemptAsync(record, ActivityTypeCodes.Store, MasterRecordStatus.Saved, true, null, save.Summary, ct);
+                // Saved to the record tables; the record now awaits the pre-batch customer search.
+                await _ctx.Master.UpdateStatusAsync(record.Id, MasterRecordStatus.PendingSearch, save.Summary, null, ct);
+                await LogAttemptAsync(record, ActivityTypeCodes.Store, MasterRecordStatus.PendingSearch, true, null, save.Summary, ct);
                 success++;
-                Log.Info("[store] [{CustomerId}] saved: {Summary}", record.CustomerId, save.Summary);
+                Log.Info("[store] [{CustomerId}] saved: {Summary} -> PendingSearch", record.CustomerId, save.Summary);
             }
             catch (Exception ex)
             {

@@ -50,6 +50,24 @@ public enum MasterRecordStatus
     /// the pipeline itself still treats a failed fetch as retryable Pending.
     /// </summary>
     DataFetchFailed = 11,
+
+    /// <summary>
+    /// Individual details are saved and the record is awaiting the pre-batch customer
+    /// search (the API check that decides whether the customer already has a CKYC record).
+    /// </summary>
+    PendingSearch = 12,
+
+    /// <summary>
+    /// Customer search completed without a match; the CKYC search key returned by the API
+    /// has been written to record 20 and the record is ready to batch.
+    /// </summary>
+    Searched = 13,
+
+    /// <summary>
+    /// Customer search found an existing CKYC record (CKYC reference number); the record
+    /// already exists and is not pushed through CKYC creation again.
+    /// </summary>
+    SearchFound = 14,
 }
 
 /// <summary>
@@ -71,6 +89,9 @@ public static class MasterRecordStatusCode
     public const string Reconciled = "RCN";
     public const string Rejected = "REJ";
     public const string DataFetchFailed = "DTF";
+    public const string PendingSearch = "SRP";
+    public const string Searched = "SRD";
+    public const string SearchFound = "SRF";
 
     public static string For(MasterRecordStatus status) => status switch
     {
@@ -86,6 +107,9 @@ public static class MasterRecordStatusCode
         MasterRecordStatus.Reconciled => Reconciled,
         MasterRecordStatus.Rejected => Rejected,
         MasterRecordStatus.DataFetchFailed => DataFetchFailed,
+        MasterRecordStatus.PendingSearch => PendingSearch,
+        MasterRecordStatus.Searched => Searched,
+        MasterRecordStatus.SearchFound => SearchFound,
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown status."),
     };
 }
@@ -96,7 +120,8 @@ public static class MasterRecordStatusExtensions
         status is MasterRecordStatus.FvuPassed
             or MasterRecordStatus.Failed
             or MasterRecordStatus.Reconciled
-            or MasterRecordStatus.Rejected;
+            or MasterRecordStatus.Rejected
+            or MasterRecordStatus.SearchFound;
 
     /// <summary>Short human label for reporting (e.g. the `status` command).</summary>
     public static string Label(this MasterRecordStatus status) => status switch
@@ -113,6 +138,9 @@ public static class MasterRecordStatusExtensions
         MasterRecordStatus.Reconciled => "Reconciled",
         MasterRecordStatus.Rejected => "Rejected",
         MasterRecordStatus.DataFetchFailed => "Data fetch failed",
+        MasterRecordStatus.PendingSearch => "Pending search",
+        MasterRecordStatus.Searched => "Searched (awaiting batch)",
+        MasterRecordStatus.SearchFound => "Search found (existing CKYC)",
         _ => status.ToString(),
     };
 }

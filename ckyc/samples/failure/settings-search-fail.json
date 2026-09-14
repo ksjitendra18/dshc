@@ -1,0 +1,9 @@
+{
+  "searchApi": {
+    "mode": "InProcess",
+    "simulateFoundEvery": 0,
+    "simulateErrorsEnabled": true,
+    "simulateErrorEvery": 0,
+    "simulateErrorForCustomerId": "CUST202609100020"
+  }
+}

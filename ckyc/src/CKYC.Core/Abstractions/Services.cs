@@ -41,6 +41,9 @@ public interface IMasterRepository
     /// <summary>Marks the record as requiring manual reconciliation (exhausted retries / CERSAI failure).</summary>
     Task<bool> MarkNeedsReconcileAsync(long id, string reason, CancellationToken ct = default);
 
+    /// <summary>Marks a record as <see cref="MasterRecordStatus.SearchFound"/> and stores the matched CKYC reference on the master summary.</summary>
+    Task<bool> MarkSearchFoundAsync(long id, string ckycReferenceNumber, string? remarks, CancellationToken ct = default);
+
     /// <summary>Clears a record's retry bookkeeping (RetryCount/LastError/LastActivity/NextRetryAt/NeedsReconcile) after a successful attempt.</summary>
     Task<bool> ClearRetryStateAsync(long id, CancellationToken ct = default);
 
@@ -85,6 +88,9 @@ public interface IIndividualRepository
 {
     Task<SaveRecordResult> SaveAsync(Individual record, CancellationToken ct = default);
     Task<IReadOnlyList<Individual>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
+
+    /// <summary>Writes the search key returned by the customer-search API into record 20 for a master record.</summary>
+    Task<bool> UpdateSearchKeyAsync(long masterRecordId, string searchKey, CancellationToken ct = default);
 }
 
 /// <summary>Legal-entity record tables operations (step 3 persistence, client type L).</summary>
@@ -113,6 +119,13 @@ public interface ICrmApiClient
 public interface IBatchGenerator
 {
     Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate, CancellationToken ct = default);
+
+    /// <summary>
+    /// Same as <see cref="GenerateAsync(IReadOnlyList{Individual}, DateOnly, CancellationToken)"/> but overlays
+    /// batch-time <paramref name="generatedDocuments"/> onto the supporting documents referenced by the records.
+    /// </summary>
+    Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate,
+        IReadOnlyList<GeneratedDocument>? generatedDocuments, CancellationToken ct = default);
 }
 
 /// <summary>Builds the pipe-delimited .UPL file and its zip archive for legal entities (step 4, client type L).</summary>

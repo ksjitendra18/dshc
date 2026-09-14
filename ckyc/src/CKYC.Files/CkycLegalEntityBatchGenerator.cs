@@ -41,12 +41,12 @@ public sealed class CkycLegalEntityBatchGenerator : ILegalEntityBatchGenerator
                 FormatValidationFailures(skipped));
 
         var descriptors = valid.Select(Describe).ToList();
-        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, null, ct);
         ApplyDocumentChecks(valid, skipped, documentPlan, missing);
         if (valid.Count == 0)
             throw new InvalidOperationException($"All {records.Count} legal-entity record(s) failed validation or document checks. " + FormatValidationFailures(skipped));
         descriptors = valid.Select(Describe).ToList();
-        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, null, ct);
 
         var fileName = CkycFileName.Build("L", _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);

@@ -77,6 +77,23 @@ public sealed class SqlServerDatabase : ICkycDatabase
                        AND CHARACTER_MAXIMUM_LENGTH < 13
                 )
                     THROW 50002, 'Schema is outdated: run scripts/sqlserver/migrations/20260827_fix_address_match_width.sql.', 1;
+
+                IF OBJECT_ID(N'dbo.search_request', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.search_batch', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.search_response', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.search_response_file', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.download_response_file', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.download_response_line', N'U') IS NOT NULL
+                   OR OBJECT_ID(N'dbo.download_response_artifact', N'U') IS NOT NULL
+                    THROW 50003, 'Schema is outdated: run scripts/sqlserver/migrations/20260910_rename_search_download_tables_to_bulk.sql.', 1;
+
+                IF COL_LENGTH(N'dbo.master_record', N'Source') IS NULL
+                    THROW 50004, 'Schema is outdated: run scripts/sqlserver/migrations/20260910_add_master_record_source.sql.', 1;
+
+                IF OBJECT_ID(N'dbo.individual_search', N'U') IS NULL
+                   OR NOT EXISTS (SELECT 1 FROM dbo.status_master WHERE StatusValue IN (12,13,14))
+                   OR NOT EXISTS (SELECT 1 FROM dbo.activity_type WHERE Code = 'Search')
+                    THROW 50005, 'Schema is outdated: run scripts/sqlserver/migrations/20260910_add_individual_search.sql.', 1;
                 """;
             await cmd.ExecuteNonQueryAsync(ct);
         }

@@ -31,6 +31,10 @@ public sealed class CkycBatchGenerator : IBatchGenerator
     }
 
     public async Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate, CancellationToken ct = default)
+        => await GenerateAsync(records, businessDate, null, ct);
+
+    public async Task<GeneratedBatch> GenerateAsync(IReadOnlyList<Individual> records, DateOnly businessDate,
+        IReadOnlyList<GeneratedDocument>? generatedDocuments, CancellationToken ct = default)
     {
         if (records.Count == 0)
             throw new InvalidOperationException("No records supplied to the batch generator.");
@@ -45,14 +49,14 @@ public sealed class CkycBatchGenerator : IBatchGenerator
                 $"{FormatValidationFailures(skipped)}");
 
         var descriptors = valid.Select(Describe).ToList();
-        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        var (documentPlan, missing) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, generatedDocuments, ct);
         ApplyDocumentChecks(valid, skipped, documentPlan, missing);
         if (valid.Count == 0)
             throw new InvalidOperationException($"All {records.Count} record(s) failed validation or document checks. " + FormatValidationFailures(skipped));
 
         // Re-plan after exclusions so filename collision allocation depends only on emitted records.
         descriptors = valid.Select(Describe).ToList();
-        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, ct);
+        (documentPlan, _) = await BatchDocumentPlanner.CreateAsync(_documents, descriptors, generatedDocuments, ct);
 
         var fileName = CkycFileName.Build(_batch.ClientType, _batch.UserId, _batch.FiCode, businessDate, _batch.SequenceStart, "UPL");
         var batchKey = Path.GetFileNameWithoutExtension(fileName);

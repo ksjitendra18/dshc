@@ -48,6 +48,8 @@ public sealed class MasterRepository : IMasterRepository
             db.MasterRecords.Add(new MasterRecordEntity
             {
                 CustomerId = id,
+                ClientType = "I",
+                Source = MasterRecordSourceValue.Default,
                 BusinessDate = businessDate,
                 Status = (int)MasterRecordStatus.Pending,
                 StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Pending),
@@ -117,6 +119,7 @@ public sealed class MasterRepository : IMasterRepository
         {
             CustomerId = customerId,
             ClientType = string.IsNullOrWhiteSpace(clientType) ? "I" : clientType,
+            Source = MasterRecordSourceValue.Default,
             BusinessDate = businessDate,
             Status = (int)MasterRecordStatus.Pending,
             StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Pending),
@@ -249,6 +252,23 @@ public sealed class MasterRepository : IMasterRepository
                 .SetProperty(m => m.NeedsReconcile, 1)
                 .SetProperty(m => m.ReconStatus, "NeedsIntervention")
                 .SetProperty(m => m.ReconRemarks, reason)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
+    public async Task<bool> MarkSearchFoundAsync(long id, string ckycReferenceNumber, string? remarks, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var status = (int)MasterRecordStatus.SearchFound;
+        var statusCode = MasterRecordStatusCode.For(MasterRecordStatus.SearchFound);
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.Status, status)
+                .SetProperty(m => m.StatusCode, statusCode)
+                .SetProperty(m => m.LastResponseCkycReference, ckycReferenceNumber)
+                .SetProperty(m => m.LastResponseRemarks, remarks)
+                .SetProperty(m => m.LastAttemptAt, now)
                 .SetProperty(m => m.UpdatedAt, now), ct) > 0;
     }
 
@@ -601,8 +621,13 @@ public sealed class MasterRepository : IMasterRepository
         var row = await db.MasterRecords.SingleOrDefaultAsync(m => m.Id == id, ct);
         if (row is null) return false;
 
-        row.Status = (int)MasterRecordStatus.Saved;
-        row.StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Saved);
+        // Individual records re-enter through the pre-batch customer search; legal entities
+        // go straight back to the batch-ready state.
+        var resetStatus = string.Equals(row.ClientType ?? "I", "L", StringComparison.OrdinalIgnoreCase)
+            ? MasterRecordStatus.Saved
+            : MasterRecordStatus.PendingSearch;
+        row.Status = (int)resetStatus;
+        row.StatusCode = MasterRecordStatusCode.For(resetStatus);
         row.IsRejected = 0;
         row.IsUploaded = 0;
         row.RetryCount = 0;
@@ -621,6 +646,9 @@ public sealed class MasterRepository : IMasterRepository
     private static (string? Flag, string? Timestamp) StageFor(MasterRecordStatus status) => status switch
     {
         MasterRecordStatus.CrmFetched => ("IsCrmFetched", "CrmFetchedAt"),
+        // Individual records reach PendingSearch when their details are persisted (store);
+        // Saved remains the batch-ready state for legal entities and post-search re-runs.
+        MasterRecordStatus.PendingSearch => ("IsSaved", "SavedAt"),
         MasterRecordStatus.Saved => ("IsSaved", "SavedAt"),
         MasterRecordStatus.Batched => ("IsBatched", "BatchedAt"),
         MasterRecordStatus.Uploaded => ("IsUploaded", "UploadedAt"),
@@ -635,6 +663,7 @@ public sealed class MasterRepository : IMasterRepository
         Id = r.Id,
         CustomerId = r.CustomerId ?? string.Empty,
         ClientType = r.ClientType ?? "I",
+        Source = MasterRecordSourceValue.ParseOrDefault(r.Source),
         BusinessDate = r.BusinessDate?.ToDateTime(TimeOnly.MinValue) ?? DateTime.MinValue,
         Status = (MasterRecordStatus)(r.Status ?? 0),
         StatusCode = r.StatusCode ?? MasterRecordStatusCode.Pending,

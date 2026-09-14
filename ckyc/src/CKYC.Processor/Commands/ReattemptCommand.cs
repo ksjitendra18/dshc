@@ -52,12 +52,15 @@ public sealed class ReattemptCommand : ICommand
         await ctx.Master.ResetForReattemptAsync(record.Id, remarks, ct);
 
         // 3) Audit trail.
+        var resetStatus = string.Equals(record.ClientType, "L", StringComparison.OrdinalIgnoreCase)
+            ? MasterRecordStatus.Saved
+            : MasterRecordStatus.PendingSearch;
         await ctx.Master.LogAttemptAsync(new MasterRecordAttempt
         {
             MasterRecordId = record.Id,
             CustomerId = record.CustomerId,
             Stage = "Reattempt",
-            Status = (int)MasterRecordStatus.Saved,
+            Status = (int)resetStatus,
             Success = true,
             Remarks = remarks,
             AttemptedAt = now,
@@ -67,8 +70,8 @@ public sealed class ReattemptCommand : ICommand
         Log.Info("[reattempt]   prior status={Status} reconStatus={ReconStatus} retryCount={RetryCount}", record.Status.Label(), record.ReconStatus, record.RetryCount);
         if (record.LastResponseRejectionRemark is not null)
             Log.Info("[reattempt]   prior rejection remark: {RejectionRemark}", record.LastResponseRejectionRemark);
-        Log.Info("[reattempt]   previous response snapshotted to master_record_reattempt; record reset to Saved.");
-        Log.Info("[reattempt] Next: `build-zip` to re-batch, then `fvu` and `response read`.");
+        Log.Info("[reattempt]   previous response snapshotted to master_record_reattempt; record reset to {Status}.", resetStatus.Label());
+        Log.Info("[reattempt] Next: `search-customer` (individuals) then `build-zip`, `fvu` and `response read`.");
         return 0;
     }
 

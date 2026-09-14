@@ -31,7 +31,7 @@ public sealed class UpdateRequest
     /// <summary>Original JSON body, re-parsed verbatim when a claimed record is processed.</summary>
     public string? RawRequestJson { get; set; }
 
-    // ---- processing state (search_request conventions) ----
+    // ---- processing state (bulk_search_request conventions) ----
     public int ProcessingStatus { get; set; }   // 0 pending, 1 claimed, 2 processed, 3 failed
     public string? ClaimToken { get; set; }
     public DateTime? ClaimedAt { get; set; }
