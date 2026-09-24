@@ -3,11 +3,14 @@ using System.IO.Compression;
 using CKYC.Core.Abstractions;
 using CKYC.Core.Configuration;
 using CKYC.Core.Domain;
+using CKYC.Core.Models;
 using CKYC.Core.Spec;
 using CKYC.Crm;
 using CKYC.Data;
 using CKYC.Files;
 using CKYC.Files.Documents;
+using CKYC.Fvu;
+using CKYC.Sftp;
 
 if (args.Length != 1)
     throw new ArgumentException("Pass the retail-customer.json path.");
@@ -687,3 +690,53 @@ finally
 }
 
 Console.WriteLine("All legal-entity create-format specification checks passed.");
+
+// ---- SFTP transport: deterministic FVU output routing + generated transport config ----
+var sftpScratch = Path.Combine(Path.GetTempPath(), $"ckyc-sftp-check-{Guid.NewGuid():N}");
+try
+{
+    Directory.CreateDirectory(sftpScratch);
+    var sftpSettings = new SftpSettings
+    {
+        Enabled = true,
+        OutboundRoot = Path.Combine(sftpScratch, "outbound"),
+        WorkspaceRoot = Path.Combine(sftpScratch, "ws"),
+        DownloadPath = Path.Combine(sftpScratch, "downloads"),
+        ReportFolder = Path.Combine(sftpScratch, "reports"),
+    };
+    var sftpPaths = SftpPaths.Resolve(sftpSettings);
+
+    if (!sftpPaths.UploadFolderFor("I_SPEC_IN0000_01012026_00001.UPL")!.EndsWith("INDIVIDUAL", StringComparison.Ordinal)
+        || !sftpPaths.UploadFolderFor("L_SPEC_IN0000_01012026_00001.UPL")!.EndsWith("LEGAL_ENTITY", StringComparison.Ordinal)
+        || sftpPaths.UploadFolderFor("IRA000337_IN9797_01012026_00001.SRC") is not null
+        || sftpPaths.UploadFolderFor("I_SPEC_IN0000_01012026_00001.UPD") is not null)
+        throw new InvalidOperationException("SFTP routing did not map .UPL batches to their entity folders (and only those).");
+
+    var sftpYaml = SftpConfigGenerator.Build(sftpSettings, sftpPaths);
+    foreach (var key in new[] { "individual-folder:", "legal-entity-folder:", "ficode:", "outputFolder:", "download:" })
+        if (!sftpYaml.Contains(key, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Generated SFTP config.yaml is missing '{key}'.");
+
+    var specUpload = Path.Combine(sftpScratch, "I_SPEC_IN0000_01012026_00001.UPL");
+    File.WriteAllText(specUpload, "10|SPEC|IO|I|00001|01-01-2026|IN0000|I|00001|I|N\n20|line");
+    var fvuSettings = new FvuSettings { UseRealFvu = false, WorkspaceRoot = Path.Combine(sftpScratch, "fvu") };
+
+    var uplBatch = new GeneratedBatch("I_SPEC_IN0000_01012026_00001", "I_SPEC_IN0000_01012026_00001.UPL",
+        specUpload, null, 1, DateTime.UtcNow);
+    var uplRun = await new SimulatedFvuRunner(fvuSettings, new FileHasher(), sftpPaths).RunAsync(uplBatch);
+    if (uplRun.OutputZipPath is null
+        || !string.Equals(Path.GetDirectoryName(uplRun.OutputZipPath), sftpPaths.IndividualFolder, StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("The FVU did not write a validated .UPL ZIP to the deterministic SFTP outbound folder.");
+
+    var srcBatch = new GeneratedBatch("IRA000337_IN9797_01012026_00001", "IRA000337_IN9797_01012026_00001.SRC",
+        specUpload, null, 1, DateTime.UtcNow);
+    var srcRun = await new SimulatedFvuRunner(fvuSettings, new FileHasher(), sftpPaths).RunAsync(srcBatch);
+    if (srcRun.OutputZipPath is null || !srcRun.OutputZipPath.Contains("runs", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("A non-.UPL batch was unexpectedly routed to an SFTP upload folder.");
+
+    Console.WriteLine("All SFTP transport specification checks passed.");
+}
+finally
+{
+    if (Directory.Exists(sftpScratch)) Directory.Delete(sftpScratch, recursive: true);
+}

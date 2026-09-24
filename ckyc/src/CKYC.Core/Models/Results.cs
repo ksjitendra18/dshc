@@ -72,3 +72,29 @@ public sealed record ValidationError(
     string? FieldValue,
     string? ErrorCode,
     string? ErrorDescription);
+
+/// <summary>Direction of an SFTP transport run.</summary>
+public enum SftpOperation
+{
+    /// <summary>Push validated batches to CERSAI.</summary>
+    Upload,
+
+    /// <summary>Pull processed response files from CERSAI.</summary>
+    Download,
+}
+
+/// <summary>
+/// Full outcome of a single SFTPRunner.exe invocation: the process exit code, whether the
+/// transfer succeeded, the files involved and where the config/report were written.
+/// </summary>
+public sealed record SftpRunResult(
+    SftpOperation Operation,
+    bool Executed,
+    int ExitCode,
+    bool Passed,
+    string? StdOut,
+    string? StdErr,
+    string? ConfigPath,
+    string? ReportPath,
+    IReadOnlyList<string> Files,
+    string? ErrorMessage);

@@ -15,8 +15,13 @@ namespace CKYC.Fvu;
 public sealed class CommandLineFvuRunner
 {
     private readonly FvuSettings _fvu;
+    private readonly SftpPaths? _outbound;
 
-    public CommandLineFvuRunner(FvuSettings fvu) => _fvu = fvu;
+    public CommandLineFvuRunner(FvuSettings fvu, SftpPaths? outbound = null)
+    {
+        _fvu = fvu;
+        _outbound = outbound;
+    }
 
     public async Task<FvuRunResult> RunAsync(Core.Models.GeneratedBatch batch, CancellationToken ct = default)
     {
@@ -35,7 +40,7 @@ public sealed class CommandLineFvuRunner
             if (outputZip is not null)
                 hash = ExtractFileHash(outputZip);
 
-            var errors = exitCode != 0 ? TryParseErrors(stdout, workspace.OutputFolder) : default;
+            var errors = exitCode != 0 ? TryParseErrors(stdout, workspace.OutputFolder, batch.UploadFileName) : default;
 
             return new FvuRunResult(
                 batch.BatchKey, true, exitCode, passed, summary, stdout, stderr,
@@ -61,7 +66,10 @@ public sealed class CommandLineFvuRunner
         var root = _fvu.WorkspaceRoot;
         var batchDir = Path.Combine(root, "runs", batch.BatchKey);
         var inputDir = Path.Combine(batchDir, "input");
-        var outputDir = Path.Combine(batchDir, "output");
+        // When SFTP integration is on, individual/legal .UPL batches are validated straight
+        // into their deterministic SFTP upload folder so the transport step has a known
+        // location to push from. Other file families keep the per-batch run output.
+        var outputDir = _outbound?.UploadFolderFor(batch.UploadFileName) ?? Path.Combine(batchDir, "output");
         var logDir = Path.Combine(batchDir, "logs");
         var docDir = Path.Combine(batchDir, "support_docs");
         Directory.CreateDirectory(inputDir);
@@ -192,12 +200,22 @@ public sealed class CommandLineFvuRunner
         return null;
     }
 
-    private static List<ValidationError>? TryParseErrors(string stdout, string outputFolder)
+    private static List<ValidationError>? TryParseErrors(string stdout, string outputFolder, string inputFileName)
     {
-        // Prefer the .ERR file written next to the input file.
-        var errFile = Directory.Exists(outputFolder)
-            ? Directory.GetFiles(outputFolder, "*.ERR").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault()
-            : null;
+        // Prefer the .ERR file written next to the input file. When the output folder is a
+        // shared/deterministic location it may hold other batches' errors, so match the batch
+        // base name first and only fall back to the newest file.
+        var errFile = (string?)null;
+        if (Directory.Exists(outputFolder))
+        {
+            var baseName = Path.GetFileNameWithoutExtension(inputFileName);
+            var candidates = Directory.GetFiles(outputFolder, "*.ERR")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .ToList();
+            errFile = candidates.FirstOrDefault(f =>
+                         Path.GetFileName(f).StartsWith(baseName, StringComparison.OrdinalIgnoreCase))
+                      ?? candidates.FirstOrDefault();
+        }
         if (errFile is not null)
         {
             var errs = new List<ValidationError>();

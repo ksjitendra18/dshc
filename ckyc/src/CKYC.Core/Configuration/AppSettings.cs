@@ -18,6 +18,7 @@ public sealed class AppSettings
     public SearchApiSettings SearchApi { get; set; } = new();
     public UpdateSettings Update { get; set; } = new();
     public DocumentGenerationSettings DocumentGeneration { get; set; } = new();
+    public SftpSettings Sftp { get; set; } = new();
 }
 
 /// <summary>

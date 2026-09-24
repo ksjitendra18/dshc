@@ -11,22 +11,29 @@ namespace CKYC.Fvu;
 /// Selects the concrete FVU implementation. Uses the real FVU_RUN_UTILITY.exe when
 /// <see cref="FvuSettings.UseRealFvu"/> is set; otherwise a deterministic local
 /// simulation produces the same output contract (used where the EXE is unavailable).
+/// <para>
+/// When SFTP integration is enabled an <see cref="SftpPaths"/> instance is supplied so that
+/// individual/legal <c>.UPL</c> batches are written to their deterministic SFTP upload folder
+/// instead of the per-batch run folder.
+/// </para>
 /// </summary>
 public sealed class FvuRunner : IFvuRunner
 {
     private readonly FvuSettings _fvu;
     private readonly IFileHasher _hasher;
+    private readonly SftpPaths? _outbound;
 
-    public FvuRunner(FvuSettings fvu, IFileHasher hasher)
+    public FvuRunner(FvuSettings fvu, IFileHasher hasher, SftpPaths? outbound = null)
     {
         _fvu = fvu;
         _hasher = hasher;
+        _outbound = outbound;
     }
 
     public Task<FvuRunResult> RunAsync(GeneratedBatch batch, CancellationToken ct = default)
         => _fvu.UseRealFvu
-            ? new CommandLineFvuRunner(_fvu).RunAsync(batch, ct)
-            : new SimulatedFvuRunner(_fvu, _hasher).RunAsync(batch, ct);
+            ? new CommandLineFvuRunner(_fvu, _outbound).RunAsync(batch, ct)
+            : new SimulatedFvuRunner(_fvu, _hasher, _outbound).RunAsync(batch, ct);
 }
 
 /// <summary>Deterministic local stand-in for the FVU when the EXE is not available.</summary>
@@ -34,11 +41,13 @@ public sealed class SimulatedFvuRunner
 {
     private readonly FvuSettings _fvu;
     private readonly IFileHasher _hasher;
+    private readonly SftpPaths? _outbound;
 
-    public SimulatedFvuRunner(FvuSettings fvu, IFileHasher hasher)
+    public SimulatedFvuRunner(FvuSettings fvu, IFileHasher hasher, SftpPaths? outbound = null)
     {
         _fvu = fvu;
         _hasher = hasher;
+        _outbound = outbound;
     }
 
     public async Task<FvuRunResult> RunAsync(GeneratedBatch batch, CancellationToken ct = default)
@@ -47,7 +56,9 @@ public sealed class SimulatedFvuRunner
 
         var root = _fvu.WorkspaceRoot;
         var batchDir = Path.Combine(root, "runs", batch.BatchKey);
-        var outputDir = Path.Combine(batchDir, "output");
+        // Individual/legal .UPL batches go to the deterministic SFTP upload folder when the
+        // SFTP integration is enabled, matching the real FVU's output routing.
+        var outputDir = _outbound?.UploadFolderFor(batch.UploadFileName) ?? Path.Combine(batchDir, "output");
         Directory.CreateDirectory(outputDir);
 
         var bytes = await File.ReadAllBytesAsync(batch.UploadFilePath, ct);

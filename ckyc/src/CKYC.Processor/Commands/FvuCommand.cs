@@ -26,11 +26,17 @@ public sealed class FvuCommand : ICommand
 
         await ctx.Journal.LogFvuRunAsync(result, ct);
 
-        // The FVU validates the batch. On pass the batch is treated as uploaded / submitted
-        // to CERSAI and now awaits its response ("uploaded & pending at CERSAI").
-        var target = result.Passed ? MasterRecordStatus.Uploaded : MasterRecordStatus.FvuFailed;
+        // The FVU validates the batch. When SFTP transport is enabled the actual submission
+        // happens in `sftp push`, so the record stops at FvuPassed here; otherwise the FVU
+        // step is still treated as the upload to CERSAI (legacy behaviour).
+        var deferToSftp = result.Passed && ctx.Settings.Sftp.Enabled;
+        var target = result.Passed
+            ? (deferToSftp ? MasterRecordStatus.FvuPassed : MasterRecordStatus.Uploaded)
+            : MasterRecordStatus.FvuFailed;
         var remarks = result.Passed
-            ? $"Uploaded to CERSAI ({result.Hash}) — awaiting response"
+            ? deferToSftp
+                ? $"FVU validated ({result.Hash}) — awaiting SFTP push"
+                : $"Uploaded to CERSAI ({result.Hash}) — awaiting response"
             : result.ErrorMessage;
         await MarkRecordsAsync(ctx, batch, target, remarks,
             result.Passed ? null : result.ErrorMessage, ct);

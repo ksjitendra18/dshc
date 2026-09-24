@@ -58,6 +58,8 @@ public static class ActivityTypeCodes
     public const string BuildZip = "BuildZip";
     public const string Search = "Search";
     public const string FvuUpload = "FvuUpload";
+    public const string SftpUpload = "SftpUpload";
+    public const string SftpDownload = "SftpDownload";
     public const string ResponseRead = "Response";
     public const string Reconciliation = "Reconciliation";
 }

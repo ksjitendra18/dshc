@@ -42,6 +42,7 @@ public sealed class CommandRegistry
             new UpdateFvuCommand(),
             new UpdateResponseCommand(),
             new DownloadResponseCommand(),
+            new SftpCommand(),
         });
 
     public string Help()
@@ -78,6 +79,8 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe update-fvu");
         sb.AppendLine("  CKYCProcessor.exe update-response");
         sb.AppendLine("  CKYCProcessor.exe download-response --path <DWN.RES.zip>");
+        sb.AppendLine("  CKYCProcessor.exe sftp push");
+        sb.AppendLine("  CKYCProcessor.exe sftp pull");
         return sb.ToString();
     }
 }

@@ -5,6 +5,7 @@
     <Project Path="src/CKYC.Data/CKYC.Data.csproj" />
     <Project Path="src/CKYC.Files/CKYC.Files.csproj" />
     <Project Path="src/CKYC.Fvu/CKYC.Fvu.csproj" />
+    <Project Path="src/CKYC.Sftp/CKYC.Sftp.csproj" />
     <Project Path="src/CKYC.Processor/CKYC.Processor.csproj" />
   </Folder>
   <Folder Name="/tests/">

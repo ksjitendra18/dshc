@@ -1053,6 +1053,16 @@ SELECT 'FvuUpload','Submit the batch to the FVU', 0, 3, 24, 2.0, 1,
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='FvuUpload');
 
 INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
+SELECT 'SftpUpload','Push validated batches to CERSAI over SFTP', 0, 3, 24, 2.0, 1,
+       'Not retryable automatically: the transport is driven by the sftp push command.', SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='SftpUpload');
+
+INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
+SELECT 'SftpDownload','Pull processed response files from CERSAI over SFTP', 0, 3, 24, 2.0, 1,
+       'Not retryable automatically: the transport is driven by the sftp pull command.', SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='SftpDownload');
+
+INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
 SELECT 'Response','Read the CERSAI response file', 0, 3, 24, 2.0, 1,
        'Not retryable automatically: an unmatched/rejected reply needs manual intervention.', SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='Response');

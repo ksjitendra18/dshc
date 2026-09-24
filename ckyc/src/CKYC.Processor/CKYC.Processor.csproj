@@ -12,6 +12,7 @@
     <ProjectReference Include="..\CKYC.Crm\CKYC.Crm.csproj" />
     <ProjectReference Include="..\CKYC.Files\CKYC.Files.csproj" />
     <ProjectReference Include="..\CKYC.Fvu\CKYC.Fvu.csproj" />
+    <ProjectReference Include="..\CKYC.Sftp\CKYC.Sftp.csproj" />
   </ItemGroup>
 
 </Project>

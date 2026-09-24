@@ -1,4 +1,5 @@
 using System.Data.Common;
+using CKYC.Core.Configuration;
 using CKYC.Core.Domain;
 using CKYC.Core.Models;
 
@@ -138,6 +139,22 @@ public interface ILegalEntityBatchGenerator
 public interface IFvuRunner
 {
     Task<FvuRunResult> RunAsync(GeneratedBatch batch, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Transport over the CERSAI SFTP utility: push FVU-validated batches and pull processed
+/// response files. Implemented by the <c>CKYC.Sftp</c> project.
+/// </summary>
+public interface ISftpRunner
+{
+    /// <summary>The resolved folders the runner reads/writes (shared with the FVU output routing).</summary>
+    SftpPaths Paths { get; }
+
+    /// <summary>Runs <c>SFTPRunner.exe upload</c> over the configured individual/legal scan folders.</summary>
+    Task<SftpRunResult> UploadAsync(CancellationToken ct = default);
+
+    /// <summary>Runs <c>SFTPRunner.exe download</c> into the configured download folder.</summary>
+    Task<SftpRunResult> DownloadAsync(CancellationToken ct = default);
 }
 
 /// <summary>File hashing used for the final hash value.</summary>

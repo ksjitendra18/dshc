@@ -5,6 +5,7 @@ using CKYC.Data;
 using CKYC.Files;
 using CKYC.Files.Documents;
 using CKYC.Fvu;
+using CKYC.Sftp;
 
 namespace CKYC.Processor;
 
@@ -49,7 +50,12 @@ public sealed class AppContext
         SearchFileWriter = new CkycSearchWriter(settings.Search);
         IndividualUpdateWriter = new CkycIndividualUpdateWriter(settings.Update);
         LegalEntityUpdateWriter = new CkycLegalEntityUpdateWriter(settings.Update);
-        Fvu = new FvuRunner(settings.Fvu, Hasher);
+
+        // SFTP transport: the FVU writes validated .UPL batches into the deterministic
+        // outbound folders and the SFTP runner uploads/downloads from those same folders.
+        SftpPaths = SftpPaths.Resolve(settings.Sftp);
+        Sftp = new SftpRunner(settings.Sftp, SftpPaths);
+        Fvu = new FvuRunner(settings.Fvu, Hasher, settings.Sftp.Enabled ? SftpPaths : null);
     }
 
     public AppSettings Settings { get; }
@@ -84,6 +90,12 @@ public sealed class AppContext
     public CkycIndividualUpdateWriter IndividualUpdateWriter { get; }
     public CkycLegalEntityUpdateWriter LegalEntityUpdateWriter { get; }
     public IFvuRunner Fvu { get; }
+
+    /// <summary>Resolved SFTP folders (shared by the FVU output routing and the transport commands).</summary>
+    public SftpPaths SftpPaths { get; }
+
+    /// <summary>CERSAI SFTP transport (push validated batches / pull response files).</summary>
+    public ISftpRunner Sftp { get; }
 
     public async Task InitializeAsync(CancellationToken ct = default)
         => await Database.InitializeSchemaAsync(ct);

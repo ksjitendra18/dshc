@@ -16,6 +16,8 @@ CKYCProcessor.exe reattempt      #    re-push a single rejected record after a b
 CKYCProcessor.exe documents import --customer-id <id> --dir <path> # supporting files -> database
 CKYCProcessor.exe build-zip      # 5. searched records -> .UPL file + zip
 CKYCProcessor.exe fvu            # 6. batch -> FVU -> processed zip + hash
+CKYCProcessor.exe sftp push      # 6b. validated .UPL zip -> CERSAI SFTP (marks records Uploaded)
+CKYCProcessor.exe sftp pull      # 6c. CERSAI SFTP -> processed response files (download only)
 CKYCProcessor.exe response read  # 7. CERSAI reply (.UPL.RESm) -> response table + master summary
 CKYCProcessor.exe reconcile      #    manual-intervention report (retry-exhausted + CERSAI-failed)
 CKYCProcessor.exe status         #    pipeline snapshot (current stage per record)
@@ -45,7 +47,8 @@ processed `.zip` plus the file-level SHA-256 hash.
 | `CKYC.Data`       | EF Core 10 / SQL Server persistence, repositories, document store, and batch/FVU audit journal. |
 | `CKYC.Crm`        | Dummy CRM: `DummyCrmDataProvider` (deterministic fake data), `HttpCrmApiClient`, and a self-hosted Kestrel API (`CrmServer`). |
 | `CKYC.Files`      | `CkycUploadWriter` (pipe-delimited .UPL per the validated field layout), `CkycBatchGenerator` (writes .UPL + supporting docs + zip), hashing. |
-| `CKYC.Fvu`        | `FvuConfigGenerator` (writes the FVU `config.yaml`), `CommandLineFvuRunner` (subprocess integration + JSON/exit-code parsing + hash extraction), deterministic simulation fallback. |
+| `CKYC.Fvu`        | `FvuConfigGenerator` (writes the FVU `config.yaml`), `CommandLineFvuRunner` (subprocess integration + JSON/exit-code parsing + hash extraction), deterministic simulation fallback. When SFTP is enabled, validated `.UPL` output is routed to the deterministic SFTP upload folders. |
+| `CKYC.Sftp`       | `SftpConfigGenerator` (writes the vendor `SFTPRunner.exe` `config.yaml`), `CommandLineSftpRunner` (push/pull subprocess integration + exit-code parsing), deterministic simulation fallback. |
 | `CKYC.Processor`  | CLI host, composition root, command registry, `appsettings.json` binding.      |
 
 ### Independent processes

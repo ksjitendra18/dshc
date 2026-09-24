@@ -7,5 +7,7 @@
     <ProjectReference Include="..\..\src\CKYC.Files\CKYC.Files.csproj" />
     <ProjectReference Include="..\..\src\CKYC.Crm\CKYC.Crm.csproj" />
     <ProjectReference Include="..\..\src\CKYC.Data\CKYC.Data.csproj" />
+    <ProjectReference Include="..\..\src\CKYC.Fvu\CKYC.Fvu.csproj" />
+    <ProjectReference Include="..\..\src\CKYC.Sftp\CKYC.Sftp.csproj" />
   </ItemGroup>
 </Project>
