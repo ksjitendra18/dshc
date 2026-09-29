@@ -30,10 +30,11 @@ public sealed class SearchCustomerCommand : ICommand
         if (customer is not null)
         {
             var matches = await ctx.Master.GetByCustomerIdsAsync(new[] { customer }, ct);
-            records = matches.Where(r => string.Equals(r.ClientType, "I", StringComparison.OrdinalIgnoreCase)).ToList();
+            records = matches.Where(r => string.Equals(r.ClientType, "I", StringComparison.OrdinalIgnoreCase)
+                                      && r.Status is not (MasterRecordStatus.ImagePending or MasterRecordStatus.ImageFailed)).ToList();
             if (records.Count == 0)
             {
-                Log.Warn("[search-customer] No individual master record found for customer '{CustomerId}'.", customer);
+                Log.Warn("[search-customer] No individual master record found for customer '{CustomerId}' (or it is still awaiting its image/document fetch).", customer);
                 return 1;
             }
         }

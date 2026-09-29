@@ -23,11 +23,11 @@ public sealed class FetchCommand : ICommand
         var date = OptionDate(args, "--date") ?? DateOnly.FromDateTime(DateTime.Today);
         var file = Option(args, "--file");
 
-        IReadOnlyList<string> ids;
+        IReadOnlyList<SourceCustomer> customers;
         if (file is not null)
         {
-            ids = DailyCustomerIdProvider.ReadCustomerIdsFile(file);
-            Log.Info("[fetch] Reading {Count} customer id(s) from '{Path}'", ids.Count, Path.GetFullPath(file));
+            customers = DailyCustomerIdProvider.ReadCustomersFile(file, ctx.Settings.Source.DocumentKeyProperty);
+            Log.Info("[fetch] Reading {Count} customer source record(s) from '{Path}'", customers.Count, Path.GetFullPath(file));
         }
         else if (args.Any(a => string.Equals(a, "custid", StringComparison.OrdinalIgnoreCase)))
         {
@@ -37,29 +37,29 @@ public sealed class FetchCommand : ICommand
                 Log.Error("[fetch] 'custid' requested but no custid.json was found (looked in the current directory and the app directory).");
                 return 1;
             }
-            ids = DailyCustomerIdProvider.ReadCustomerIdsFile(custFile);
-            Log.Info("[fetch] Reading {Count} customer id(s) from '{Path}'", ids.Count, custFile);
+            customers = DailyCustomerIdProvider.ReadCustomersFile(custFile, ctx.Settings.Source.DocumentKeyProperty);
+            Log.Info("[fetch] Reading {Count} customer source record(s) from '{Path}'", customers.Count, custFile);
         }
         else
         {
-            ids = ctx.CustomerIds.GetIds(date);
-            Log.Info("[fetch] Source customer ids for {Date}: {Count}", date, ids.Count);
+            customers = ctx.CustomerIds.GetCustomers(date);
+            Log.Info("[fetch] Source customer ids for {Date}: {Count}", date, customers.Count);
         }
 
-        if (ids.Count == 0)
+        if (customers.Count == 0)
         {
             Log.Warn("[fetch] No customer ids found.");
             return 1;
         }
 
-        // Split the source set into ids that fetched cleanly and ids where the CBS call
+        // Split the source set into records that fetched cleanly and ids where the CBS call
         // failed (only when the CBS simulation is enabled — off by default).
-        var (ok, failed) = Partition(ctx, ids, date);
+        var (ok, failed) = Partition(ctx, customers);
         if (failed.Count > 0)
-            foreach (var id in failed)
-                await CbsFailAsync(ctx, id, date, ct);
+            foreach (var customer in failed)
+                await CbsFailAsync(ctx, customer.CustomerId, date, ct);
 
-        var result = await ctx.Master.UpsertDailyAsync(ok, date, ct);
+        var result = await ctx.Master.UpsertCustomersAsync(ok, date, ct);
 
         Log.Info("[fetch] Inserted={Inserted}  Skipped={Skipped}  Total={Total}  CbsFailed={CbsFailed}", result.Inserted, result.Skipped, result.Total, failed.Count);
         Log.Info("[fetch] Master table rows now in Pending state -> run `store` to enrich from the CRM.");
@@ -67,19 +67,19 @@ public sealed class FetchCommand : ICommand
         return failed.Count > 0 ? 1 : 0;
     }
 
-    private static (IReadOnlyList<string> Ok, IReadOnlyList<string> Failed) Partition(AppContext ctx, IReadOnlyList<string> ids, DateOnly date)
+    private static (IReadOnlyList<SourceCustomer> Ok, IReadOnlyList<SourceCustomer> Failed) Partition(AppContext ctx, IReadOnlyList<SourceCustomer> customers)
     {
         var sim = ctx.Settings.Simulation;
-        if (!sim.CbsFetchErrorsEnabled || sim.CbsFetchFailEvery <= 0) return (ids, Array.Empty<string>());
+        if (!sim.CbsFetchErrorsEnabled || sim.CbsFetchFailEvery <= 0) return (customers, Array.Empty<SourceCustomer>());
 
-        var ok = new List<string>();
-        var failed = new List<string>();
-        for (var i = 0; i < ids.Count; i++)
+        var ok = new List<SourceCustomer>();
+        var failed = new List<SourceCustomer>();
+        for (var i = 0; i < customers.Count; i++)
         {
-            var id = ids[i];
-            var fail = (!string.IsNullOrEmpty(sim.CbsFetchFailForCustomerId) && id == sim.CbsFetchFailForCustomerId)
+            var customer = customers[i];
+            var fail = (!string.IsNullOrEmpty(sim.CbsFetchFailForCustomerId) && customer.CustomerId == sim.CbsFetchFailForCustomerId)
                        || ((i + 1) % sim.CbsFetchFailEvery == 0);
-            (fail ? failed : ok).Add(id);
+            (fail ? failed : ok).Add(customer);
         }
         return (ok, failed);
     }

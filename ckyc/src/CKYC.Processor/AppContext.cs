@@ -56,6 +56,10 @@ public sealed class AppContext
         SftpPaths = SftpPaths.Resolve(settings.Sftp);
         Sftp = new SftpRunner(settings.Sftp, SftpPaths);
         Fvu = new FvuRunner(settings.Fvu, Hasher, settings.Sftp.Enabled ? SftpPaths : null);
+
+        // Per-channel image/document sources (beckyc SFTP, …); used by `store` to decide the
+        // next stage and by `documents fetch` / `retry` to pull the file.
+        DocumentSources = new DocumentSourceRegistry(settings.DocumentFetch);
     }
 
     public AppSettings Settings { get; }
@@ -96,6 +100,9 @@ public sealed class AppContext
 
     /// <summary>CERSAI SFTP transport (push validated batches / pull response files).</summary>
     public ISftpRunner Sftp { get; }
+
+    /// <summary>Per-channel image/document sources for the pre-search document fetch step.</summary>
+    public IDocumentSourceRegistry DocumentSources { get; }
 
     public async Task InitializeAsync(CancellationToken ct = default)
         => await Database.InitializeSchemaAsync(ct);

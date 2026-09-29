@@ -60,6 +60,7 @@ public sealed class CommandRegistry
         sb.AppendLine("  CKYCProcessor.exe fetch cust");
         sb.AppendLine("  CKYCProcessor.exe crm serve");
         sb.AppendLine("  CKYCProcessor.exe store");
+        sb.AppendLine("  CKYCProcessor.exe documents fetch --limit 1000");
         sb.AppendLine("  CKYCProcessor.exe search-customer");
         sb.AppendLine("  CKYCProcessor.exe retry");
         sb.AppendLine("  CKYCProcessor.exe reattempt --customer CUST202608240001 --reason \"PAN corrected\"");

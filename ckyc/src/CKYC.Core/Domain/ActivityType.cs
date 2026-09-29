@@ -60,6 +60,7 @@ public static class ActivityTypeCodes
     public const string FvuUpload = "FvuUpload";
     public const string SftpUpload = "SftpUpload";
     public const string SftpDownload = "SftpDownload";
+    public const string ImageFetch = "ImageFetch";
     public const string ResponseRead = "Response";
     public const string Reconciliation = "Reconciliation";
 }

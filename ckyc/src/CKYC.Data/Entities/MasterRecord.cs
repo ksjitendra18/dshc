@@ -13,6 +13,8 @@ public partial class MasterRecord
 
     public string? Source { get; set; }
 
+    public string? DocumentKey { get; set; }
+
     public DateOnly? BusinessDate { get; set; }
 
     public int? Status { get; set; }
@@ -45,6 +47,8 @@ public partial class MasterRecord
 
     public int? IsSaved { get; set; }
 
+    public int? IsImageFetched { get; set; }
+
     public int? IsBatched { get; set; }
 
     public int? IsUploaded { get; set; }
@@ -58,6 +62,8 @@ public partial class MasterRecord
     public DateTime? CrmFetchedAt { get; set; }
 
     public DateTime? SavedAt { get; set; }
+
+    public DateTime? ImageFetchedAt { get; set; }
 
     public DateTime? BatchedAt { get; set; }
 

@@ -68,6 +68,19 @@ public enum MasterRecordStatus
     /// already exists and is not pushed through CKYC creation again.
     /// </summary>
     SearchFound = 14,
+
+    /// <summary>
+    /// Individual details are saved and the record is awaiting its supporting image/document
+    /// fetch from the intake channel's source (e.g. the beckyc SFTP folder). Records in this
+    /// state are deliberately <b>not</b> batched — the image step must complete first.
+    /// </summary>
+    ImagePending = 15,
+
+    /// <summary>
+    /// The supporting image/document could not be fetched (missing in the source). The record
+    /// is blocked from batching and is retryable through the <c>ImageFetch</c> activity.
+    /// </summary>
+    ImageFailed = 16,
 }
 
 /// <summary>
@@ -92,6 +105,8 @@ public static class MasterRecordStatusCode
     public const string PendingSearch = "SRP";
     public const string Searched = "SRD";
     public const string SearchFound = "SRF";
+    public const string ImagePending = "IMP";
+    public const string ImageFailed = "IMF";
 
     public static string For(MasterRecordStatus status) => status switch
     {
@@ -110,6 +125,8 @@ public static class MasterRecordStatusCode
         MasterRecordStatus.PendingSearch => PendingSearch,
         MasterRecordStatus.Searched => Searched,
         MasterRecordStatus.SearchFound => SearchFound,
+        MasterRecordStatus.ImagePending => ImagePending,
+        MasterRecordStatus.ImageFailed => ImageFailed,
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown status."),
     };
 }
@@ -141,6 +158,8 @@ public static class MasterRecordStatusExtensions
         MasterRecordStatus.PendingSearch => "Pending search",
         MasterRecordStatus.Searched => "Searched (awaiting batch)",
         MasterRecordStatus.SearchFound => "Search found (existing CKYC)",
+        MasterRecordStatus.ImagePending => "Image pending (awaiting document fetch)",
+        MasterRecordStatus.ImageFailed => "Image fetch failed (blocked from batch)",
         _ => status.ToString(),
     };
 }

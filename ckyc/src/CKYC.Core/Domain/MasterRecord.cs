@@ -21,6 +21,14 @@ public sealed class MasterRecord
     public string ClientType { get; set; } = "I";
     /// <summary>Intake channel this record originated from (app / beckyc).</summary>
     public MasterRecordSource Source { get; set; } = MasterRecordSource.Beckyc;
+
+    /// <summary>
+    /// Document key (<c>dockey</c>) supplied with the daily source fetch (step 1). It locates
+    /// the customer's image/document in the intake channel's source (e.g. the beckyc SFTP
+    /// folder); when blank the customer id is used as the key.
+    /// </summary>
+    public string? DocumentKey { get; set; }
+
     public DateTime BusinessDate { get; set; }
     public MasterRecordStatus Status { get; set; } = MasterRecordStatus.Pending;
     /// <summary>
@@ -60,6 +68,7 @@ public sealed class MasterRecord
     // ---- stage flags (has the stage been reached?) ----
     public bool IsCrmFetched { get; set; }
     public bool IsSaved { get; set; }
+    public bool IsImageFetched { get; set; }
     public bool IsBatched { get; set; }
     public bool IsUploaded { get; set; }
     public bool IsResponseRead { get; set; }
@@ -69,6 +78,7 @@ public sealed class MasterRecord
     // ---- stage timestamps ----
     public DateTime? CrmFetchedAt { get; set; }
     public DateTime? SavedAt { get; set; }
+    public DateTime? ImageFetchedAt { get; set; }
     public DateTime? BatchedAt { get; set; }
     public DateTime? UploadedAt { get; set; }
     public DateTime? FirstResponseAt { get; set; }

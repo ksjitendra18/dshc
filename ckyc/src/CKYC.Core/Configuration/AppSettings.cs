@@ -18,6 +18,7 @@ public sealed class AppSettings
     public SearchApiSettings SearchApi { get; set; } = new();
     public UpdateSettings Update { get; set; } = new();
     public DocumentGenerationSettings DocumentGeneration { get; set; } = new();
+    public DocumentFetchSettings DocumentFetch { get; set; } = new();
     public SftpSettings Sftp { get; set; } = new();
 }
 
@@ -168,6 +169,15 @@ public sealed class SourceSettings
     public string? FilePath { get; set; }
     public int GenerateCount { get; set; } = 12;
     public int GenerateSeed { get; set; } = 20260824;
+
+    /// <summary>
+    /// Name of the source property that carries the per-customer document key (the dockey that
+    /// locates the image on the channel source; an opaque string, <b>not</b> the customer id).
+    /// Defaults to <c>documentKey</c>; the common aliases (<c>dockey</c>, <c>docKey</c>,
+    /// <c>document_key</c>, …) are also accepted. Set this when the upstream payload names the
+    /// field differently.
+    /// </summary>
+    public string? DocumentKeyProperty { get; set; }
 }
 
 /// <summary>Dummy CRM API wiring. Replace with the production endpoint later.</summary>

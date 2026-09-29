@@ -7,8 +7,21 @@ namespace CKYC.Files.Documents;
 /// name. <see cref="DocumentReferences.For(Individual)"/> is the read side of this mapping, so
 /// every slot here is guaranteed to be collected into the batch's supporting documents.
 /// </summary>
-internal static class RecordDocumentSlots
+public static class RecordDocumentSlots
 {
+    /// <summary>The record field name currently published for a slot (null when unknown/unset).</summary>
+    public static string? Resolve(Individual record, string slot) => (slot ?? string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "proofovd" => record.Proofs.FirstOrDefault(p => string.Equals(p.OvdType, "E", StringComparison.OrdinalIgnoreCase))?.CopyOfOvd,
+        "permanentaddressovd" => record.PermanentAddress?.CopyOfOvd,
+        "currentaddressovd" => record.CurrentAddress?.CopyOfOvd,
+        "photoofindividual" => record.PhotoOfIndividual,
+        "pandocument" => record.PanDocument,
+        "clientconsent" => record.Other?.ClientConsent,
+        "declarationdocument" => record.Other?.DeclarationDocument,
+        _ => null,
+    };
+
     public static void Apply(Individual record, IReadOnlyList<string> slots, string fileName, List<string> warnings)
     {
         foreach (var slot in slots)

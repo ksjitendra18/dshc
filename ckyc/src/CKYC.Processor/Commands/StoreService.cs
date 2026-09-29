@@ -56,11 +56,20 @@ public sealed class StoreService
                     continue;
                 }
 
-                // Saved to the record tables; the record now awaits the pre-batch customer search.
-                await _ctx.Master.UpdateStatusAsync(record.Id, MasterRecordStatus.PendingSearch, save.Summary, null, ct);
-                await LogAttemptAsync(record, ActivityTypeCodes.Store, MasterRecordStatus.PendingSearch, true, null, save.Summary, ct);
+                // Saved to the record tables. When the intake channel has an image/document
+                // source (e.g. beckyc SFTP), the record must first fetch it before the
+                // customer search — so it stops at ImagePending and cannot be batched until
+                // `documents fetch` succeeds. Channels without a source go straight to search.
+                var channel = MasterRecordSourceValue.For(record.Source);
+                var nextStatus = _ctx.DocumentSources.IsConfigured(channel)
+                    ? MasterRecordStatus.ImagePending
+                    : MasterRecordStatus.PendingSearch;
+                await _ctx.Master.UpdateStatusAsync(record.Id, nextStatus, save.Summary, null, ct);
+                await LogAttemptAsync(record, ActivityTypeCodes.Store, nextStatus, true, null, save.Summary, ct);
                 success++;
-                Log.Info("[store] [{CustomerId}] saved: {Summary} -> PendingSearch", record.CustomerId, save.Summary);
+                Log.Info("[store] [{CustomerId}] saved: {Summary} -> {Status}", record.CustomerId, save.Summary, nextStatus.Label());
+                if (nextStatus == MasterRecordStatus.ImagePending)
+                    Log.Info("[store] [{CustomerId}] awaiting image/document fetch from channel '{Channel}' -> run `documents fetch`", record.CustomerId, channel);
             }
             catch (Exception ex)
             {

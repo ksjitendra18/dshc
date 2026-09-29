@@ -740,3 +740,96 @@ finally
 {
     if (Directory.Exists(sftpScratch)) Directory.Delete(sftpScratch, recursive: true);
 }
+
+// ---- Image/document fetch: step-1 dockey parsing + simulated channel source + registry ----
+var sourceScratch = Path.Combine(Path.GetTempPath(), $"ckyc-docfetch-check-{Guid.NewGuid():N}");
+try
+{
+    Directory.CreateDirectory(sourceScratch);
+
+    // The source file may carry the document key per customer (step 1). The dockey is a
+    // SEPARATE, opaque value from the customer id (customerId RJKS2026, dockey 9f2c…).
+    var custIdFile = Path.Combine(sourceScratch, "custid.json");
+    File.WriteAllText(custIdFile, """
+        { "customerId": "RJKS2026", "documentKey": "9f2c7a4e81b3d6f0a5c2" }
+        """);
+    var single = DailyCustomerIdProvider.ReadCustomersFile(custIdFile);
+    if (single.Count != 1 || single[0].CustomerId != "RJKS2026" || single[0].DocumentKey != "9f2c7a4e81b3d6f0a5c2")
+        throw new InvalidOperationException("The step-1 source did not preserve the per-customer document key.");
+
+    // The key field name is configurable when the upstream payload names it differently.
+    var customKeyFile = Path.Combine(sourceScratch, "custom-key.json");
+    File.WriteAllText(customKeyFile, """
+        { "customerId": "RJKS2026", "documentNumber": "7d3f9a1c5e8b2046" }
+        """);
+    var custom = DailyCustomerIdProvider.ReadCustomersFile(customKeyFile, "documentNumber");
+    if (custom.Count != 1 || custom[0].DocumentKey != "7d3f9a1c5e8b2046")
+        throw new InvalidOperationException("The configured document-key property name was not honoured.");
+
+    var arrayJson = Path.Combine(sourceScratch, "many.json");
+    File.WriteAllText(arrayJson, """
+        [ { "customerId": "CUST-A", "documentKey": "KEY-A", "source": "beckyc" },
+          { "customerId": "CUST-B" },
+          "CUST-C" ]
+        """);
+    var many = DailyCustomerIdProvider.ReadCustomersFile(arrayJson);
+    if (many.Count != 3 || many[0].DocumentKey != "KEY-A" || many[0].Source != "beckyc"
+        || many[1].DocumentKey is not null || many[2].CustomerId != "CUST-C")
+        throw new InvalidOperationException("The array source did not parse object and string entries with their document keys.");
+
+    // Simon (offline) channel source: <downloadRoot>/inbox/beckyc/<dockey>/image.jpg
+    var documentSettings = new DocumentFetchSettings
+    {
+        Enabled = true,
+        DownloadRoot = sourceScratch,
+        Channels = new Dictionary<string, ChannelDocumentFetchSettings>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["beckyc"] = new ChannelDocumentFetchSettings
+            {
+                Enabled = true,
+                Kind = "Sftp",
+                UseRealSftp = false,
+                BasePath = "x/y/z",
+                FolderPattern = "{dockey}",
+                Documents = new List<ChannelDocumentSettings>
+                {
+                    new() { Remote = "image.jpg", Target = "Photo.jpg", Slot = "photoOfIndividual" },
+                },
+            },
+        },
+    };
+
+    var registry = new DocumentSourceRegistry(documentSettings);
+    if (!registry.IsConfigured("BECKYC") || registry.Resolve("app") is not null)
+        throw new InvalidOperationException("The document-source registry did not resolve the beckyc channel case-insensitively.");
+    if (!documentSettings.IsConfiguredFor("beckyc"))
+        throw new InvalidOperationException("DocumentFetchSettings did not report beckyc as configured.");
+
+    var folder = Path.Combine(sourceScratch, "inbox", "beckyc", "9f2c7a4e81b3d6f0a5c2");
+    Directory.CreateDirectory(folder);
+    var jpeg = ValidDocumentBytes("image.jpg", "sftp");
+    File.WriteAllBytes(Path.Combine(folder, "image.jpg"), jpeg);
+
+    var source = registry.Resolve("beckyc")!;
+    var fetched = await source.FetchAsync(new DocumentFetchRequest("beckyc", "RJKS2026", "9f2c7a4e81b3d6f0a5c2"));
+    if (fetched.Count != 1 || fetched[0].RemoteName != "image.jpg" || !fetched[0].Content.SequenceEqual(jpeg))
+        throw new InvalidOperationException("The simulated beckyc source did not return the expected image.");
+
+    var missing = false;
+    try
+    {
+        await source.FetchAsync(new DocumentFetchRequest("beckyc", "RJKS2026", "0a1b2c3d4e5f6a7b8c9d"));
+    }
+    catch (DirectoryNotFoundException)
+    {
+        missing = true;
+    }
+    if (!missing)
+        throw new InvalidOperationException("A missing document-key folder did not block the record (expected DirectoryNotFoundException).");
+
+    Console.WriteLine("All image/document fetch specification checks passed.");
+}
+finally
+{
+    if (Directory.Exists(sourceScratch)) Directory.Delete(sourceScratch, recursive: true);
+}

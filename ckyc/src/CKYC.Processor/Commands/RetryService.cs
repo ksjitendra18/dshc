@@ -85,6 +85,9 @@ public sealed class RetryService
             case ActivityTypeCodes.Search:
                 return await RunSearchRetryAsync(ctx, activity, rec, ct);
 
+            case ActivityTypeCodes.ImageFetch:
+                return await RunImageFetchRetryAsync(ctx, activity, rec, ct);
+
             case ActivityTypeCodes.CbsFetch:
                 return await RunCbsFetchRetryAsync(ctx, activity, rec, ct);
 
@@ -109,6 +112,23 @@ public sealed class RetryService
         {
             await ctx.Master.ClearRetryStateAsync(rec.Id, ct);
             Log.Info("[retry]   {CustomerId}: customer search re-attempted -> {Status}", rec.CustomerId, outcome.Label());
+            return new RetryOutcome(true);
+        }
+
+        var refreshed = await ctx.Master.GetByIdAsync(rec.Id, ct);
+        var exhausted = refreshed is null || refreshed.NeedsReconcile
+                        || refreshed.RetryCount >= activity.MaxAttempts;
+        return new RetryOutcome(false, PermanentFailure: exhausted);
+    }
+
+    private static async Task<RetryOutcome> RunImageFetchRetryAsync(AppContext ctx, ActivityType activity, MasterRecord rec, CancellationToken ct)
+    {
+        // Re-run the image/document fetch for the single record. Success advances it to
+        // PendingSearch; otherwise it stays blocked (ImageFailed) with the retry budget.
+        var result = await new DocumentFetchService(ctx).ProcessAsync([rec], ct);
+        if (result.Succeeded > 0)
+        {
+            Log.Info("[retry]   {CustomerId}: image/document re-fetched -> PendingSearch", rec.CustomerId);
             return new RetryOutcome(true);
         }
 

@@ -1,0 +1,7 @@
+{
+  "customers": [
+    { "customerId": "RJKS2026", "documentKey": "9f2c7a4e81b3d6f0a5c2", "source": "beckyc" },
+    { "customerId": "CUST202608240001", "documentKey": "4b8e1d6c0a9f3e7d2b5c", "source": "beckyc" },
+    { "customerId": "CUST202608240002", "documentKey": "c7a1e93b5d2f8046a1e9" }
+  ]
+}

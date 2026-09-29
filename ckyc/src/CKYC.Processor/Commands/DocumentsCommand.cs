@@ -9,16 +9,74 @@ public sealed class DocumentsCommand : ICommand
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     public string Name => "documents";
-    public string Usage => "CKYCProcessor.exe documents import --customer-id <id> --dir <path>";
+    public string Usage => "CKYCProcessor.exe documents import --customer-id <id> --dir <path>\n" +
+                           "                      documents fetch [--limit N] [--customer <id>] [--channel <name>]";
 
     public async Task<int> ExecuteAsync(AppContext ctx, string[] args, CancellationToken ct = default)
     {
-        if (args.Length == 0 || !string.Equals(args[0], "import", StringComparison.OrdinalIgnoreCase))
+        if (args.Length == 0)
         {
             Log.Error("[documents] Expected: {Usage}", Usage);
             return 1;
         }
 
+        if (string.Equals(args[0], "fetch", StringComparison.OrdinalIgnoreCase))
+            return await FetchAsync(ctx, args, ct);
+
+        if (!string.Equals(args[0], "import", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Error("[documents] Expected: {Usage}", Usage);
+            return 1;
+        }
+
+        return await ImportAsync(ctx, args, ct);
+    }
+
+    /// <summary>
+    /// Pulls the supporting image/document for each individual record awaiting it
+    /// (<see cref="MasterRecordStatus.ImagePending"/>) from its intake channel's source.
+    /// </summary>
+    private static async Task<int> FetchAsync(AppContext ctx, string[] args, CancellationToken ct)
+    {
+        var limit = OptionInt(args, "--limit") ?? 1000;
+        var customer = Option(args, "--customer");
+        var channelFilter = Option(args, "--channel");
+
+        IReadOnlyList<MasterRecord> records;
+        if (customer is not null)
+        {
+            var matches = await ctx.Master.GetByCustomerIdsAsync([customer], ct);
+            records = matches.Where(r => string.Equals(r.ClientType, "I", StringComparison.OrdinalIgnoreCase)
+                                      && r.Status is MasterRecordStatus.ImagePending or MasterRecordStatus.ImageFailed).ToList();
+            if (records.Count == 0)
+            {
+                Log.Warn("[documents] No individual record awaiting an image/document was found for customer '{CustomerId}'.", customer);
+                return 1;
+            }
+        }
+        else
+        {
+            records = await ctx.Master.GetByStatusAsync(MasterRecordStatus.ImagePending, limit, "I", ct);
+            if (records.Count == 0)
+            {
+                Log.Info("[documents] No records awaiting an image/document. Run `store` first.");
+                return 0;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(channelFilter))
+            records = records.Where(r => string.Equals(MasterRecordSourceValue.For(r.Source), channelFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        Log.Info("[documents] Fetching image/supporting documents for {Count} record(s)...", records.Count);
+        var result = await new DocumentFetchService(ctx).ProcessAsync(records, ct);
+        Log.Info("[documents] Done: Fetched={Succeeded}  Failed={Failed}  Total={Total}", result.Succeeded, result.Failed, result.Total);
+        if (result.Failed > 0)
+            Log.Warn("[documents] {Failed} record(s) are blocked from batching (ImageFailed). Run `retry --activity ImageFetch` or fix the source.", result.Failed);
+        return result.Failed > 0 ? 1 : 0;
+    }
+
+    private static async Task<int> ImportAsync(AppContext ctx, string[] args, CancellationToken ct)
+    {
         var customerId = Option(args, "--customer-id");
         var directory = Option(args, "--dir");
         if (string.IsNullOrWhiteSpace(customerId) || string.IsNullOrWhiteSpace(directory))
@@ -95,5 +153,11 @@ public sealed class DocumentsCommand : ICommand
     {
         var index = Array.FindIndex(args, value => string.Equals(value, name, StringComparison.OrdinalIgnoreCase));
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    private static int? OptionInt(string[] args, string name)
+    {
+        var index = Array.FindIndex(args, value => string.Equals(value, name, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < args.Length && int.TryParse(args[index + 1], out var value) ? value : null;
     }
 }

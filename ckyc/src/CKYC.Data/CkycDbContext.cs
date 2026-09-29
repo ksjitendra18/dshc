@@ -708,6 +708,7 @@ public partial class CkycDbContext : DbContext
             entity.Property(e => e.ClientType).HasMaxLength(1);
             entity.Property(e => e.CustomerId).HasMaxLength(50);
             entity.Property(e => e.Source).HasMaxLength(20);
+            entity.Property(e => e.DocumentKey).HasMaxLength(200);
             entity.Property(e => e.LastActivity).HasMaxLength(50);
             entity.Property(e => e.LastError).HasMaxLength(1000);
             entity.Property(e => e.LastResponseAckNumber).HasMaxLength(10);

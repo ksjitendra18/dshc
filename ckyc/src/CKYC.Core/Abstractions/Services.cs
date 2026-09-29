@@ -18,6 +18,13 @@ public interface ICkycDatabase
 public interface IMasterRepository
 {
     Task<FetchResult> UpsertDailyAsync(IReadOnlyCollection<string> customerIds, DateOnly businessDate, CancellationToken ct = default);
+
+    /// <summary>
+    /// Upserts the daily source records (customer id + optional document key + intake channel):
+    /// inserts new master rows in <c>Pending</c> and returns the insert/skip counts.
+    /// </summary>
+    Task<FetchResult> UpsertCustomersAsync(IReadOnlyCollection<SourceCustomer> customers, DateOnly businessDate, CancellationToken ct = default);
+
     Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetRetryableAsync(int maxRetries, int limit, CancellationToken ct = default);
     Task<IReadOnlyList<MasterRecord>> GetByCustomerIdsAsync(IReadOnlyCollection<string> customerIds, CancellationToken ct = default);
@@ -44,6 +51,13 @@ public interface IMasterRepository
 
     /// <summary>Marks a record as <see cref="MasterRecordStatus.SearchFound"/> and stores the matched CKYC reference on the master summary.</summary>
     Task<bool> MarkSearchFoundAsync(long id, string ckycReferenceNumber, string? remarks, CancellationToken ct = default);
+
+    /// <summary>
+    /// Marks a record's supporting image/document as fetched: sets the <c>IsImageFetched</c>
+    /// flag/timestamp and advances the record to <see cref="MasterRecordStatus.PendingSearch"/>
+    /// so the customer search (and only then batching) can proceed.
+    /// </summary>
+    Task<bool> MarkImageFetchedAsync(long id, string? remarks, CancellationToken ct = default);
 
     /// <summary>Clears a record's retry bookkeeping (RetryCount/LastError/LastActivity/NextRetryAt/NeedsReconcile) after a successful attempt.</summary>
     Task<bool> ClearRetryStateAsync(long id, CancellationToken ct = default);
@@ -107,6 +121,41 @@ public interface IDocumentStore
     Task<CustomerDocument> ImportAsync(DocumentImport import, Stream content, CancellationToken ct = default);
     Task<CustomerDocument?> GetAsync(long masterRecordId, string fileName, CancellationToken ct = default);
     Task<IReadOnlyList<CustomerDocument>> GetByMasterRecordIdsAsync(IReadOnlyCollection<long> masterRecordIds, CancellationToken ct = default);
+}
+
+/// <summary>Identifies the image/document to fetch for one customer (channel + step-1 document key).</summary>
+public sealed record DocumentFetchRequest(string Channel, string CustomerId, string DocumentKey);
+
+/// <summary>A document retrieved from an external source, ready to import into the store.</summary>
+public sealed record FetchedDocument(string RemoteName, byte[] Content, string SourceReference);
+
+/// <summary>
+/// Channel-specific image/document source. One implementation per intake channel
+/// (e.g. the beckyc SFTP folder), selected by <see cref="Channel"/>.
+/// </summary>
+public interface IDocumentSource
+{
+    /// <summary>The intake channel this source serves (<c>app</c>, <c>beckyc</c>, …).</summary>
+    string Channel { get; }
+
+    /// <summary>True when this source is fully configured and can fetch.</summary>
+    bool IsConfigured { get; }
+
+    /// <summary>
+    /// Fetches the configured image/document(s) for the request. Throws when the source is
+    /// unreachable or the expected file is missing, so the caller can block + retry the record.
+    /// </summary>
+    Task<IReadOnlyList<FetchedDocument>> FetchAsync(DocumentFetchRequest request, CancellationToken ct = default);
+}
+
+/// <summary>Resolves the configured <see cref="IDocumentSource"/> for an intake channel.</summary>
+public interface IDocumentSourceRegistry
+{
+    /// <summary>True when the channel has an active source configured.</summary>
+    bool IsConfigured(string? channel);
+
+    /// <summary>The source for a channel, or null when none is configured.</summary>
+    IDocumentSource? Resolve(string? channel);
 }
 
 /// <summary>Dummy CRM API client (step 2).</summary>

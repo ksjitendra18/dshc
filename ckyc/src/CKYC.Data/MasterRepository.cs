@@ -25,31 +25,36 @@ public sealed class MasterRepository : IMasterRepository
 
     public MasterRepository(ICkycDatabase db) => _db = db;
 
-    public async Task<FetchResult> UpsertDailyAsync(IReadOnlyCollection<string> customerIds, DateOnly businessDate, CancellationToken ct = default)
+    public Task<FetchResult> UpsertDailyAsync(IReadOnlyCollection<string> customerIds, DateOnly businessDate, CancellationToken ct = default)
+        => UpsertCustomersAsync(customerIds.Select(id => new SourceCustomer(id)).ToList(), businessDate, ct);
+
+    public async Task<FetchResult> UpsertCustomersAsync(IReadOnlyCollection<SourceCustomer> customers, DateOnly businessDate, CancellationToken ct = default)
     {
-        if (customerIds.Count == 0) return new FetchResult(0, 0, 0);
+        if (customers.Count == 0) return new FetchResult(0, 0, 0);
 
         var now = DateTime.UtcNow;
         await using var db = _db.CreateContext();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.AcquireTransactionLockAsync("CKYC:master-record-upsert", ct);
+        var ids = customers.Select(c => c.CustomerId).ToList();
         var existing = await db.MasterRecords
-            .Where(m => customerIds.Contains(m.CustomerId!))
+            .Where(m => ids.Contains(m.CustomerId!))
             .Select(m => m.CustomerId)
             .ToListAsync(ct);
         var existingSet = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var inserted = 0;
-        foreach (var id in customerIds)
+        foreach (var customer in customers)
         {
             // Add returns false for both a database hit and an earlier duplicate in this
             // input collection, preserving the SQLite INSERT..WHERE NOT EXISTS behavior.
-            if (!existingSet.Add(id)) continue;
+            if (!existingSet.Add(customer.CustomerId)) continue;
             db.MasterRecords.Add(new MasterRecordEntity
             {
-                CustomerId = id,
+                CustomerId = customer.CustomerId,
                 ClientType = "I",
-                Source = MasterRecordSourceValue.Default,
+                Source = string.IsNullOrWhiteSpace(customer.Source) ? MasterRecordSourceValue.Default : customer.Source.Trim(),
+                DocumentKey = string.IsNullOrWhiteSpace(customer.DocumentKey) ? null : customer.DocumentKey.Trim(),
                 BusinessDate = businessDate,
                 Status = (int)MasterRecordStatus.Pending,
                 StatusCode = MasterRecordStatusCode.For(MasterRecordStatus.Pending),
@@ -62,7 +67,7 @@ public sealed class MasterRepository : IMasterRepository
         }
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return new FetchResult(inserted, customerIds.Count - inserted, customerIds.Count);
+        return new FetchResult(inserted, customers.Count - inserted, customers.Count);
     }
 
     public async Task<IReadOnlyList<MasterRecord>> GetByStatusAsync(MasterRecordStatus status, int limit, string? clientType = null, CancellationToken ct = default)
@@ -272,6 +277,25 @@ public sealed class MasterRepository : IMasterRepository
                 .SetProperty(m => m.UpdatedAt, now), ct) > 0;
     }
 
+    public async Task<bool> MarkImageFetchedAsync(long id, string? remarks, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var status = (int)MasterRecordStatus.PendingSearch;
+        var statusCode = MasterRecordStatusCode.For(MasterRecordStatus.PendingSearch);
+        await using var db = _db.CreateContext();
+        return await db.MasterRecords
+            .Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.Status, status)
+                .SetProperty(m => m.StatusCode, statusCode)
+                .SetProperty(m => m.IsImageFetched, 1)
+                .SetProperty(m => m.ImageFetchedAt, now)
+                .SetProperty(m => m.Remarks, remarks)
+                .SetProperty(m => m.LastError, (string?)null)
+                .SetProperty(m => m.LastAttemptAt, now)
+                .SetProperty(m => m.UpdatedAt, now), ct) > 0;
+    }
+
     public async Task<bool> ClearRetryStateAsync(long id, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -292,7 +316,7 @@ public sealed class MasterRepository : IMasterRepository
     {
         await using var db = _db.CreateContext();
         var rows = await db.MasterRecords.AsNoTracking()
-            .Where(m => m.Status == (int)MasterRecordStatus.Failed
+            .Where(m => (m.Status == (int)MasterRecordStatus.Failed || m.Status == (int)MasterRecordStatus.ImageFailed)
                      && m.RetryCount < maxAttempts
                      && m.LastActivity == activityCode
                      && (m.NextRetryAt == null || m.NextRetryAt <= now))
@@ -664,6 +688,7 @@ public sealed class MasterRepository : IMasterRepository
         CustomerId = r.CustomerId ?? string.Empty,
         ClientType = r.ClientType ?? "I",
         Source = MasterRecordSourceValue.ParseOrDefault(r.Source),
+        DocumentKey = r.DocumentKey,
         BusinessDate = r.BusinessDate?.ToDateTime(TimeOnly.MinValue) ?? DateTime.MinValue,
         Status = (MasterRecordStatus)(r.Status ?? 0),
         StatusCode = r.StatusCode ?? MasterRecordStatusCode.Pending,
@@ -680,6 +705,7 @@ public sealed class MasterRepository : IMasterRepository
         BatchRecordLine = r.BatchRecordLine,
         IsCrmFetched = r.IsCrmFetched == 1,
         IsSaved = r.IsSaved == 1,
+        IsImageFetched = r.IsImageFetched == 1,
         IsBatched = r.IsBatched == 1,
         IsUploaded = r.IsUploaded == 1,
         IsResponseRead = r.IsResponseRead == 1,
@@ -687,6 +713,7 @@ public sealed class MasterRepository : IMasterRepository
         IsRejected = r.IsRejected == 1,
         CrmFetchedAt = r.CrmFetchedAt,
         SavedAt = r.SavedAt,
+        ImageFetchedAt = r.ImageFetchedAt,
         BatchedAt = r.BatchedAt,
         UploadedAt = r.UploadedAt,
         FirstResponseAt = r.FirstResponseAt,

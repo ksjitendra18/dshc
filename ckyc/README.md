@@ -14,6 +14,7 @@ CKYCProcessor.exe search-customer # 4. per-customer search API (match -> end; el
 CKYCProcessor.exe retry          #    retry failed records (exponential backoff, max 3 tries)
 CKYCProcessor.exe reattempt      #    re-push a single rejected record after a backend DB fix
 CKYCProcessor.exe documents import --customer-id <id> --dir <path> # supporting files -> database
+CKYCProcessor.exe documents fetch  [--limit N] [--customer <id>] [--channel beckyc] # image/document <- channel source (beckyc SFTP)
 CKYCProcessor.exe build-zip      # 5. searched records -> .UPL file + zip
 CKYCProcessor.exe fvu            # 6. batch -> FVU -> processed zip + hash
 CKYCProcessor.exe sftp push      # 6b. validated .UPL zip -> CERSAI SFTP (marks records Uploaded)
@@ -67,9 +68,10 @@ database with `scripts/sqlserver/schema.sql`; application startup verifies the s
 not run production DDL.
 
 - `master_record` — step 1: daily customer ids + the intake channel it came from
-  (`Source`: `app` / `beckyc`), a **single current-stage** `Status`
-  (Pending → CrmFetched → PendingSearch → Searched → Batched → Uploaded → ResponseRead →
-  Reconciled/Rejected, or SearchFound when the customer already exists in CKYC),
+  (`Source`: `app` / `beckyc`) and the step-1 document key (`DocumentKey`, used to fetch the
+  customer's image from the channel source), a **single current-stage** `Status`
+  (Pending → CrmFetched → PendingSearch/ImagePending → Searched → Batched → Uploaded →
+  ResponseRead → Reconciled/Rejected, or SearchFound when the customer already exists in CKYC),
   per-stage `Is*`/`*At` flags and timestamps, `Remarks`, `RetryCount` / `LastError` /
   `LastAttemptAt`, the batch file + record-20 line, the latest CERSAI reply summary
   (`LastResponse*`), and reconciliation fields (`ReconStatus`/`ReconRemarks`).
@@ -184,6 +186,58 @@ batch limit. Set `documentGeneration.enabled` to `false` to restore the previous
 > **Note:** generation mutates the in-memory record's document fields so the generated name is
 > written to the `.UPL` and packaged in the zip; the stored record rows are not modified.
 > Re-running `build-zip` re-renders from the latest record data.
+
+### Channel image/document fetch (pre-search, individual)
+
+Some intake channels store the customer's image/supporting document **outside** the CRM, keyed
+by a document key (`dockey`) that arrives with the **step-1 source fetch**. For the `beckyc`
+channel that file lives in a folder on SFTP:
+
+```
+<basePath>/<dockey>/image.jpg          # e.g. x/y/z/9f2c7a4e81b3d6f0a5c2/image.jpg
+```
+
+The **customer id** (e.g. `RJKS2026`) and the **document key** are separate values: the document
+key is an opaque string supplied by the source, and the SFTP folder is named by it.
+
+The flow is:
+
+```
+fetch cust  ->  store (CRM)  ->  documents fetch  ->  search-customer  ->  build-zip
+                                        |
+                        beckyc SFTP (per-channel source)
+```
+
+* **`fetch`** reads the daily source, including the per-customer `documentKey`
+  (`custid.json`: `{ "customerId": "RJKS2026", "documentKey": "<opaque-key>" }`). The
+  customer id and the document key are **different values**; a plain id list falls back to using
+  the customer id as the key. The key is stored on `master_record.DocumentKey`. The source field
+  name is configurable via `source.documentKeyProperty` when the upstream payload names it
+  differently.
+* **`store`** saves the record and, when the record's channel has an active source, leaves it at
+  **ImagePending (`IMP`)** instead of PendingSearch. Channels with no source (currently `app`)
+  pass straight through to PendingSearch.
+* **`documents fetch`** resolves the source for each record's channel, pulls the configured
+  file(s) for the record's `dockey`, imports them into the document store, points the configured
+  record slot at the fetched file, and advances the record to PendingSearch. A missing/failed
+  file leaves the record at **ImageFailed (`IMF`)**, blocked from batching and retryable through
+  the `ImageFetch` activity (`retry --activity ImageFetch`).
+* **`build-zip`** only ever batches `Searched` records, so a record whose image was never
+  fetched can never reach a batch — the image step is a hard gate.
+
+```powershell
+CKYCProcessor.exe documents fetch                 # all ImagePending records
+CKYCProcessor.exe documents fetch --customer CUST202608240001
+CKYCProcessor.exe retry --activity ImageFetch     # re-attempt records blocked at ImageFailed
+```
+
+Each channel has its own source because the image lives in a different place per channel
+(`documentFetch.channels.<channel>`). Only the `beckyc` SFTP source is implemented; a channel
+with no configuration is a pass-through. Set `documentFetch.enabled=false` (or a channel's
+`enabled=false`) to disable the gate and restore the previous behaviour.
+
+> The beckyc file name / folder layout is not known yet — see **`docs/image.md`** for a
+> field-by-field "where to change it" guide with examples for each common SFTP layout.
 
 ### Customer search process (pre-batch, individual)
 
@@ -436,6 +490,7 @@ canonical example. The `activity_type` master lists each process with its policy
 |-----------|-----------|--------------|-------------------|
 | `CbsFetch`| yes       | 3            | exponential 24h×2 |
 | `Crm`/`Store` | yes  | 3            | exponential 24h×2 |
+| `Search`/`ImageFetch` | yes | 3        | exponential 24h×2 |
 | `BuildZip`/`FvuUpload`/`Response`/`Reconciliation` | no | — | — |
 
 A failed retryable attempt computes the next attempt as
@@ -504,6 +559,13 @@ Configuration lives in `appsettings.json` (JSON). Key sections:
   `mode` (`InProcess` simulator / `Http` real endpoint), `baseUrl`, `searchEndpoint`,
   `timeoutSeconds`, `claimTimeoutMinutes`, `simulateFoundEvery`, plus the failure-simulation
   knobs `simulateErrorsEnabled`, `simulateErrorEvery`, `simulateErrorForCustomerId`.
+- `documentFetch` — per-channel image/document source used by the pre-search image step:
+  `enabled`, `downloadRoot`, and `channels.<channel>` (`enabled`, `kind` (`Sftp`), `useRealSftp`,
+  `host`, `port`, `username`, `password`, `privateKeyPath`, `basePath`, `folderPattern`,
+  `timeoutSeconds`, `documents[]` with `remote`/`pattern`/`target`/`slot`). The `beckyc` channel
+  is configured to pull `<basePath>/<dockey>/image.jpg`. Set `useRealSftp=false` to read from the
+  deterministic local inbox (`<downloadRoot>/inbox/<channel>/<dockey>`) for offline runs.
+- `documentGeneration` — per-channel supporting-document rendering (Aadhaar/consent/undertaking).
 
 ---
 
@@ -537,6 +599,9 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 # 3. enrich + save; every Nth save is simulated to fail to exercise retries
 & $exe store
 & $exe retry
+
+# 3b. fetch each record's image/document from its channel source (beckyc SFTP by dockey)
+& $exe documents fetch
 
 # 4. pre-batch customer search: match -> SearchFound (ends); no match -> record-20 search key
 & $exe search-customer

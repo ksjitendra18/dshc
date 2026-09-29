@@ -94,6 +94,11 @@ public sealed class SqlServerDatabase : ICkycDatabase
                    OR NOT EXISTS (SELECT 1 FROM dbo.status_master WHERE StatusValue IN (12,13,14))
                    OR NOT EXISTS (SELECT 1 FROM dbo.activity_type WHERE Code = 'Search')
                     THROW 50005, 'Schema is outdated: run scripts/sqlserver/migrations/20260910_add_individual_search.sql.', 1;
+
+                IF COL_LENGTH(N'dbo.master_record', N'DocumentKey') IS NULL
+                   OR NOT EXISTS (SELECT 1 FROM dbo.status_master WHERE StatusValue IN (15,16))
+                   OR NOT EXISTS (SELECT 1 FROM dbo.activity_type WHERE Code = 'ImageFetch')
+                    THROW 50006, 'Schema is outdated: run scripts/sqlserver/migrations/20260928_add_document_fetch.sql.', 1;
                 """;
             await cmd.ExecuteNonQueryAsync(ct);
         }

@@ -9,6 +9,7 @@ using AppContext = CKYC.Processor.AppContext;
 //   fetch cust    : step 1  customer ids -> master table (CBS fetch; retryable)
 //   crm serve     : step 2  dummy CRM API
 //   store         : step 3  CRM -> record tables (with simulated error saving)
+//   documents fetch : step 3b fetch the record's image/document from the channel source (e.g. beckyc SFTP)
 //   search-customer : step 4  per-customer search API (found -> end; not found -> record-20 key)
 //   retry         :        retry failed records (per retryable activity, exponential backoff)
 //   reattempt     :        re-push a single rejected record after a backend DB fix

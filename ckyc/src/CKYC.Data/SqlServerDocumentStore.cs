@@ -169,14 +169,20 @@ public abstract class SqlServerDocumentStoreBase : IDocumentStore
     {
         ".pdf" => "application/pdf",
         ".jpg" or ".jpeg" => "image/jpeg",
-        _ => throw new InvalidDataException("Only PDF, JPG and JPEG documents are supported."),
+        ".png" => "image/png",
+        _ => throw new InvalidDataException("Only PDF, JPG, JPEG and PNG documents are supported."),
     };
+
+    private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
     private static void ValidateSignature(string mediaType, byte[] bytes)
     {
-        var valid = mediaType == "application/pdf"
-            ? bytes.Length >= 5 && bytes.AsSpan(0, 5).SequenceEqual("%PDF-"u8)
-            : bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
+        var valid = mediaType switch
+        {
+            "application/pdf" => bytes.Length >= 5 && bytes.AsSpan(0, 5).SequenceEqual("%PDF-"u8),
+            "image/png" => bytes.Length >= PngSignature.Length && bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature),
+            _ => bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff,
+        };
         if (!valid) throw new InvalidDataException($"The content signature does not match {mediaType}.");
     }
 

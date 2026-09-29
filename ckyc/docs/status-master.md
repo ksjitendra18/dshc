@@ -28,6 +28,8 @@ changing the underlying numeric storage.
 | 12 | SRP | PendingSearch | Individual details are saved and the record is awaiting the pre-batch customer search. | no |
 | 13 | SRD | Searched | Customer search completed without a match; the API search key is written to record 20 and the record is ready to batch. | no |
 | 14 | SRF | SearchFound | Customer search found an existing CKYC record; the customer already exists and is not pushed through creation again. | yes |
+| 15 | IMP | ImagePending | Individual details are saved and the record is awaiting its supporting image/document from the intake channel source. | no |
+| 16 | IMF | ImageFailed | The supporting image/document could not be fetched; the record is blocked from batching and is retryable. | no |
 
 ## Status-master table (DDL)
 

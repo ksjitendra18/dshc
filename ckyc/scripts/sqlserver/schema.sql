@@ -25,6 +25,14 @@
 --      Searched -> Batched; SearchFound is terminal (the customer already exists).
 --   9. activity_type gains the retryable Search activity.
 --
+-- v4 changes (pre-search image/document fetch):
+--  10. master_record gains DocumentKey (the step-1 dockey), IsImageFetched and
+--      ImageFetchedAt. After `store`, records for channels with a document source
+--      (beckyc SFTP) stop at ImagePending until `documents fetch` succeeds; failures
+--      land in ImageFailed and are blocked from batching.
+--  11. status_master gains StatusValue 15 IMP (ImagePending) and 16 IMF (ImageFailed).
+--  12. activity_type gains the retryable ImageFetch activity.
+--
 -- Column definitions use ONLY a length (NVARCHAR(n)) plus the identity primary
 -- key: no NOT NULL / UNIQUE / CHECK / FK constraints — except the document and
 -- file-content tables where binary integrity is enforced deliberately.
@@ -37,6 +45,7 @@ CREATE TABLE master_record (
     CustomerId                   NVARCHAR(50),
     ClientType                   NVARCHAR(1),
     Source                       NVARCHAR(20) CONSTRAINT DF_master_record_source DEFAULT ('beckyc'),
+    DocumentKey                  NVARCHAR(200),
     BusinessDate                 DATE,
     Status                       INT,
     StatusCode                   NVARCHAR(3),
@@ -53,6 +62,7 @@ CREATE TABLE master_record (
     BatchRecordLine              INT,
     IsCrmFetched                 INT,
     IsSaved                      INT,
+    IsImageFetched               INT,
     IsBatched                    INT,
     IsUploaded                   INT,
     IsResponseRead               INT,
@@ -60,6 +70,7 @@ CREATE TABLE master_record (
     IsRejected                   INT,
     CrmFetchedAt                 DATETIME2,
     SavedAt                      DATETIME2,
+    ImageFetchedAt               DATETIME2,
     BatchedAt                    DATETIME2,
     UploadedAt                   DATETIME2,
     FirstResponseAt              DATETIME2,
@@ -1063,6 +1074,11 @@ SELECT 'SftpDownload','Pull processed response files from CERSAI over SFTP', 0, 
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='SftpDownload');
 
 INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
+SELECT 'ImageFetch','Fetch the record''s image/document from the channel source (beckyc SFTP)', 1, 3, 24, 2.0, 1,
+       'Retryable: the image/document may not yet be on the source; exponential backoff 24h, max 3 tries.', SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='ImageFetch');
+
+INSERT INTO activity_type (Code, Name, IsRetryable, MaxAttempts, BackoffBaseHours, BackoffMultiplier, IsActive, Remarks, CreatedAt)
 SELECT 'Response','Read the CERSAI response file', 0, 3, 24, 2.0, 1,
        'Not retryable automatically: an unmatched/rejected reply needs manual intervention.', SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM activity_type WHERE Code='Response');
@@ -1137,4 +1153,14 @@ WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=13);
 INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
 SELECT 14,'SRF','SearchFound','Customer search found an existing CKYC record; the customer already exists and is not pushed through creation again.',1,1,SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=14);
+
+-- v4: pre-search image/document fetch (individual). Records stop here after `store` until
+-- `documents fetch` pulls the file from the intake channel source (beckyc SFTP).
+INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
+SELECT 15,'IMP','ImagePending','Individual details are saved and the record is awaiting its supporting image/document from the intake channel source.',0,1,SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=15);
+
+INSERT INTO status_master (StatusValue, Code, Name, Description, IsTerminal, IsActive, CreatedAt)
+SELECT 16,'IMF','ImageFailed','The supporting image/document could not be fetched; the record is blocked from batching and is retryable.',0,1,SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM status_master WHERE StatusValue=16);
 GO
