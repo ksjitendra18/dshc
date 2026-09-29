@@ -351,3 +351,164 @@ SELECT TOP (5) BatchKey, ExitCode, Passed, HashValue FROM fvu_run ORDER BY Id DE
 - `crm.mode` is not read by code — the CRM client is always HTTP; the mock comes from `crm serve`.
 
 For the real-integration to-do list, see [`uatworkflow.md`](uatworkflow.md) Part B.
+
+---
+
+## 11. Running from `retail-customer.json` while the CRM is not ready (with the provider image)
+
+Yes — while the CRM is not prepared, feeding a record directly with
+`samples\retail-customer.json` is the right path. `insert` does **not** call the CRM server:
+the omitted/default fields come from the **in-process** dummy provider (`ctx.CrmData`), so you do
+**not** need `fetch`, `crm serve` or `store`. This section is the exact step-by-step, and how to
+hand the provider's photo so the **Aadhaar EKYC report is generated with the photo overlaid**.
+
+### 11.1 Why this works (and the one thing to know)
+
+- `insert` creates the master row with the default intake channel **`beckyc`**
+  (`MasterRecordSourceValue.Default`). The `documentGeneration` Aadhaar document is configured for
+  `channels: [ "beckyc" ]`, so **it applies** — the Aadhaar report will be rendered at `build-zip`.
+- `insert` leaves the record at **`PendingSearch`**, so you **must** run `search-customer` before
+  `build-zip` (which only batches `Searched` records).
+- Document generation happens at `build-zip` and writes the rendered bytes straight into the batch's
+  `support_docs`; it does **not** read the CRM. The only thing it needs from outside is the
+  **customer photo** (overlay) — everything else is drawn from the template + record fields.
+
+### 11.2 What `retail-customer.json` (`CUST-RETAIL-SKSS`) references
+
+`build-zip` collects the filenames in the record via `DocumentReferences.For` and requires each one
+to exist (in the store, or as a generated document). For this sample:
+
+| Record field | File name | How it is satisfied |
+|---|---|---|
+| `photoOfIndividual` | `Photo.jpg` | **You must supply this** (the provider photo) — it is the image overlaid on the Aadhaar report |
+| `proofs[0].copyOfOvd` (OVD `E`) | `AdhaarAP.pdf` | **Generated** at `build-zip` (Aadhaar renderer) → supersedes any stored copy |
+| `other.declarationDocument` | `D1.pdf` | **Generated** at `build-zip` (static undertaking) |
+| `other.clientConsent` | `C3.pdf` | **Generated** at `build-zip` (consent renderer) |
+| `pan` | (no `panDocument`) | not referenced |
+
+> `AdhaarAP.pdf`/`D1.pdf`/`C3.pdf` are produced by `documentGeneration`; `Photo.jpg` is **not** —
+> it has to be imported. That is the "image from the provider".
+
+### 11.3 Prepare a mock settings file (so it never touches the real FVU/SFTP)
+
+Copy `appsettings.json` to `appsettings.mock.json` and set:
+
+```jsonc
+{
+  "fvu": { "useRealFvu": false },     // simulated FVU (fake processed zip + hash, always passes)
+  "sftp": { "enabled": false },       // `fvu` marks records Uploaded directly; sftp commands disabled
+  "documentGeneration": { "enabled": true, "templateRoot": "doc_format" }   // keep generation ON
+}
+```
+
+> Run from the repo root (`D:\ckyccentral\ckyc`) so `templateRoot: doc_format` resolves.
+> Remember `--settings` is a **full replacement**, not a merge — that is why you copy the whole
+> file and only edit the keys above.
+
+### 11.4 Step-by-step
+
+```powershell
+cd D:\ckyccentral\ckyc
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+$exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
+
+# (once) fresh DB
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d master -b -Q "IF DB_ID('CkycCentral') IS NOT NULL BEGIN ALTER DATABASE [CkycCentral] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [CkycCentral]; END; CREATE DATABASE [CkycCentral];"
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral -b -i .\scripts\sqlserver\schema.sql
+
+# 1) put the provider photo + supporting files in the staging folder (see 11.5)
+#    staging\CUST-RETAIL-SKSS\  ->  Photo.jpg (+ AdhaarAP.pdf, D1.pdf, C3.pdf)
+
+# 2) create the record (no CRM server needed)
+& $exe --settings .\appsettings.mock.json insert --file .\samples\retail-customer.json
+#    -> master CUST-RETAIL-SKSS is PendingSearch (SRP)
+
+# 3) import the referenced documents (the provider image lands here)
+& $exe --settings .\appsettings.mock.json documents import --customer-id CUST-RETAIL-SKSS --dir .\staging\CUST-RETAIL-SKSS
+#    -> file_content + individual_document; Photo.jpg stored as image/jpeg
+
+# 4) customer search (SRP -> Searched)
+& $exe --settings .\appsettings.mock.json search-customer --customer CUST-RETAIL-SKSS
+
+# 5) build the batch -> renders AdhaarAP.pdf (photo overlaid), C3.pdf, D1.pdf into support_docs
+& $exe --settings .\appsettings.mock.json build-zip
+#    note the printed BatchKey / Upload file / Zip path
+
+# 6) validate (simulated)
+& $exe --settings .\appsettings.mock.json fvu
+
+# 7) inspect
+& $exe --settings .\appsettings.mock.json status
+& $exe --settings .\appsettings.mock.json batch-find --customer CUST-RETAIL-SKSS
+```
+
+### 11.5 How to give the provider image so the Aadhaar is generated properly
+
+The Aadhaar EKYC report is a **blank template** (`doc_format\Aadhaar_template_blank.jpg`,
+1095 × 1549 px) onto which the record's values are printed, and the customer's **photo is overlaid**
+into the printed photo frame. The renderer
+(`src\CKYC.Files\Documents\AadhaarDocumentRenderer.cs`) resolves the photo like this:
+
+1. `documentGeneration.enabled = true`, the document `kind = Aadhaar`, and the record's channel is
+   `beckyc` → applies.
+2. `overlayPhoto = true` (default) and `record.PhotoOfIndividual` is non-empty.
+3. `DocumentGenerationService.ResolvePhotoAsync` looks up that **file name in the document store**
+   for the master record and uses it **only if its media type starts with `image/`**.
+
+So the provider image must end up in the document store under the name the record references.
+
+**Do this:**
+
+1. Take the **customer photograph** from the provider (a JPEG is preferred; PNG also works if you
+   rename the reference — see below).
+2. Save it into the staging folder using the **exact file name** the record references:
+   ```
+   staging\CUST-RETAIL-SKSS\Photo.jpg      <- provider photo (content = JPEG)
+   ```
+   The repo already ships the other referenced files in `staging\CUST-RETAIL-SKSS\`
+   (`AdhaarAP.pdf`, `D1.pdf`, `C3.pdf`); keep them there so `documents import` reports no missing
+   files. Optionally replace `AdhaarAP.pdf` with the provider's real Aadhaar scan — the rendered
+   report still supersedes it in the batch.
+3. Run `documents import` (step 3 above). This stores `Photo.jpg` as `image/jpeg` for the record.
+4. Run `search-customer` → `build-zip`. The generated `AdhaarAP.pdf` in the batch's `support_docs`
+   now has the provider photo inside the frame at template coords `(100, 214)` size `209 × 207`.
+
+**If the provider photo is a PNG (or the name differs):**
+
+- The extension **must match the content** (a PNG byte stream stored as `.jpg` fails the signature
+  check). Either convert it to JPEG and name it `Photo.jpg`, **or** name it `Photo.png` and change
+  the record before insert:
+  ```jsonc
+  // samples\retail-customer.json
+  "photoOfIndividual": "Photo.png"
+  ```
+  then stage `Photo.png` and import.
+- Any of `.jpg`, `.jpeg`, `.png` are accepted by the document store; `.pdf` is accepted but is **not**
+  an image, so it will **not** be overlaid (the template photo is kept).
+
+**Verify the photo was stored (optional):**
+
+```powershell
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral -Q "SELECT d.OriginalFileName, d.MediaType, d.ByteLength FROM individual_document d JOIN master_record m ON m.Id = d.MasterRecordId WHERE m.CustomerId = 'CUST-RETAIL-SKSS';"
+```
+
+**Verify the generated Aadhaar:** open
+`runtime\output\<BatchKey>\support_docs\AdhaarAP.pdf` (also inside the batch zip) and confirm the
+photo sits in the top-left frame and the printed values (name, masked Aadhaar `XXXX XXXX <last4>`,
+gender, DOB, address) match the record.
+
+### 11.6 Troubleshooting this path
+
+| Symptom | Cause / fix |
+|---|---|
+| `AdhaarAP.pdf` not in `support_docs` | Channel is not `beckyc` (inserted records default to `beckyc`, so this usually means a different source), or `documentGeneration.enabled=false`, or the document's `channels` no longer includes `beckyc`. |
+| Warning `Document template not found: '...doc_format\Aadhaar_template_blank.jpg'` | Ran the exe from outside the repo root; run from `D:\ckyccentral\ckyc` or set `templateRoot` to an absolute path. |
+| Aadhaar generated but **no photo** | `photoOfIndividual` empty, or the stored file's media type is not `image/*` (e.g. a PDF), or `overlayPhoto=false`. |
+| Record skipped at `build-zip` | `Photo.jpg` (or another reference) was never imported; run `documents import` again and check the "missing referenced file" lines. |
+| `documents import` exits `1` with "Missing referenced file" | Every referenced file must be staged. The referenced set is `Photo.jpg`, `AdhaarAP.pdf`, `D1.pdf`, `C3.pdf` — stage all of them (the repo ships them). It still imports whatever is present. |
+| `The content signature does not match image/jpeg` | The file's extension does not match its bytes (e.g. PNG data named `.jpg`). Rename to match the content, or convert. |
+| Record stuck at `PendingSearch` and not batched | `search-customer` was not run (or `--customer` had no eligible record). `build-zip` batches only `Searched`. |
+
+> Note: `.UPL` output goes to `batch.outputRoot`. If your copy of `appsettings.json` still points at
+> `D:\centralprocessing\ckyc\runtime\output`, repoint it (or set `batch.outputRoot`) so the batch
+> lands inside the repo. See `uatworkflow.md` §B12.
