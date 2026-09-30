@@ -194,8 +194,12 @@ by a document key (`dockey`) that arrives with the **step-1 source fetch**. For 
 channel that file lives in a folder on SFTP:
 
 ```
-<basePath>/<dockey>/image.jpg          # e.g. x/y/z/9f2c7a4e81b3d6f0a5c2/image.jpg
+<basePath>/<dockey>/<file>.txt   # e.g. x/y/z/9f2c7a4e81b3d6f0a5c2/2148407522542412.txt
 ```
+
+The `.txt` holds the image/PDF as a single `data:<mime>;base64,<payload>` line; the fetch decodes
+it and stores it under the **real, sniffed** extension (the declared mime type is not trusted, so
+a JPEG labelled `image/png` is stored as `.jpg`).
 
 The **customer id** (e.g. `RJKS2026`) and the **document key** are separate values: the document
 key is an opaque string supplied by the source, and the SFTP folder is named by it.
@@ -236,8 +240,9 @@ Each channel has its own source because the image lives in a different place per
 with no configuration is a pass-through. Set `documentFetch.enabled=false` (or a channel's
 `enabled=false`) to disable the gate and restore the previous behaviour.
 
-> The beckyc file name / folder layout is not known yet — see **`docs/image.md`** for a
-> field-by-field "where to change it" guide with examples for each common SFTP layout.
+> The beckyc channel delivers a base64 `data:` `.txt` inside the dockey folder; the fetch decodes
+> it automatically. See **`docs/image.md`** for a field-by-field "where to change it" guide with
+> examples for each common SFTP layout.
 
 ### Customer search process (pre-batch, individual)
 
@@ -563,7 +568,8 @@ Configuration lives in `appsettings.json` (JSON). Key sections:
   `enabled`, `downloadRoot`, and `channels.<channel>` (`enabled`, `kind` (`Sftp`), `useRealSftp`,
   `host`, `port`, `username`, `password`, `privateKeyPath`, `basePath`, `folderPattern`,
   `timeoutSeconds`, `documents[]` with `remote`/`pattern`/`target`/`slot`). The `beckyc` channel
-  is configured to pull `<basePath>/<dockey>/image.jpg`. Set `useRealSftp=false` to read from the
+  is configured to pull the base64 `.txt` (`<basePath>/<dockey>/<file>.txt`) and decode it to the
+  real image/PDF. Set `useRealSftp=false` to read from the
   deterministic local inbox (`<downloadRoot>/inbox/<channel>/<dockey>`) for offline runs.
 - `documentGeneration` — per-channel supporting-document rendering (Aadhaar/consent/undertaking).
 

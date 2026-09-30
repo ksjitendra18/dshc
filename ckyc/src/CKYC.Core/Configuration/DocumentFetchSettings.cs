@@ -6,7 +6,8 @@ namespace CKYC.Core.Configuration;
 /// source before it can move on to the customer search and batching. Each intake channel
 /// (<c>app</c>, <c>beckyc</c>, …) can have its own source, because the image lives in a
 /// different place per channel — for <c>beckyc</c> it is a folder on an SFTP server:
-/// <c>&lt;basePath&gt;/&lt;dockey&gt;/image.png</c>.
+/// <c>&lt;basePath&gt;/&lt;dockey&gt;/&lt;file&gt;.txt</c>, where the <c>.txt</c> holds the image as
+/// a base64 data URI that the fetch decodes.
 /// <para>
 /// The lookup key (the <c>dockey</c>) arrives with the daily customer-id source fetch
 /// (step 1) and is stored on <c>master_record.DocumentKey</c>. When the source does not

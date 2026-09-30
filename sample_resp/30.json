@@ -1,0 +1,30 @@
+{
+    "responseCode": "00",
+    "records": {
+        "CUR_DETAILS": [
+            {
+                "LENGTH_OF_AADHAAR": "A",
+                "PRESENCER_OF_NPR_IN_CENSUS_RECORDS": "N",
+                "PASSPORT_EXPIRY_DATE": null,
+                "PRESENCE_OF_VOTER_ID_IN_ECI_REPOSITORY": "N",
+                "MODE_OF_AUTHENTICATION": "ModeAuth",
+                "EQUIVALENT_EDOC": "N",
+                "PRESENCE_OF_DRIVING_LICENSE_IN_RTO_REPOSITORY": "N",
+                "DATA_RECEIVED_FROM_OFFLINE_VERIFICATION": "NA",
+                "IDENTITY_NUMBER": null,
+                "COPY_OF_OVD": null,
+                "EKYC_DATA_RECEIVED_FROM_UIDAI": "Y",
+                "PRESENCE_OF_NREGA_IN_RESPECTIVE_REPOSITORY": "N",
+                "DOCUMENT_VERIFIED_FROM_DIGILOCKER": "N",
+                "DRIVING_LICENSE_EXPIRY_DATE": null,
+                "PRESENCE_OF_PASSPORT_IN_MEA_REPOSITORY": "N",
+                "OVD_TYPE": "E",
+                "CERTIFIED_COPY_VERIFIED_WITH_ORIGINAL_OVD": "Y",
+                "MODE_OF_AADHAAR_VERIFICATION": "MODE"
+            }
+        ]
+    },
+    "msg": null,
+    "recordsCount": 1
+}
+https://privateapi.uat.bank.in/privategateway/1/CKYC2SFTP/CKYC2SFTPSG/v1/CKYC2Retail30API

@@ -1,0 +1,14 @@
+https://privateapi.uat.bank.in/privategateway/1/CKYC2SFTP/CKYC2SFTPSG/v1/CKYCR2Retail50Details
+{
+    "status": "S",
+    "details": {
+        "COUNTRYCODE": "91",
+        "RECORD_TYPE": "50",
+        "EMAIL_ID": " ",
+        "LINENUMBER": "LineNumber",
+        "MOBILENO": "7289012000",
+        "EMAILVALIDATEDTHROUGHOTP": "Y",
+        "MOBILENUMBERVALIDATEDTHROUGHTHIRDPARTY": "Y",
+        "MOBILENUMBERVALIDATEDTHROUGHOTP": "Y"
+    }
+}

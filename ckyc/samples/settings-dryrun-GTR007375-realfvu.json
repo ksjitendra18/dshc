@@ -1,12 +1,13 @@
-{
+﻿{
   "database": {
     "provider": "sqlserver",
-    "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=CkycCentral;Trusted_Connection=True;TrustServerCertificate=True",
+    "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=CkycCentral_DryRun;Trusted_Connection=True;TrustServerCertificate=True",
     "createSchemaOnStartup": false
   },
   "source": {
-    "mode": "generate",
-    "generateCount": 12,
+    "mode": "file",
+    "filePath": "D:\\ckyccentral\\ckyc\\samples\\dryrun-GTR007375-source.json",
+    "generateCount": 1,
     "generateSeed": 20260824
   },
   "crm": {
@@ -23,11 +24,11 @@
     "clientType": "I",
     "versionNumber": "V1.1",
     "sequenceStart": 64,
-    "outputRoot": "D:\\centralprocessing\\ckyc\\runtime\\output"
+    "outputRoot": "D:\\ckyccentral\\ckyc\\runtime\\output"
   },
   "fvu": {
-    "exePath": "D:\\centralprocessing\\vendor\\FVU_RUN_UTILITY.exe",
-    "workspaceRoot": "D:\\centralprocessing\\ckyc\\runtime",
+    "exePath": "D:\\ckyccentral\\vendor\\FVU_RUN_UTILITY.exe",
+    "workspaceRoot": "D:\\ckyccentral\\ckyc\\runtime",
     "apiBaseUrl": "http://localhost:9091",
     "apiEndpoint": "/api/search-validate/file-with-support",
     "triggerSource": "BATCH",
@@ -36,11 +37,11 @@
     "useRealFvu": true
   },
   "response": {
-    "inputRoot": "D:\\centralprocessing\\cersai\\response"
+    "inputRoot": "D:\\ckyccentral\\ckyc\\runtime\\response"
   },
   "simulation": {
-    "saveErrorsEnabled": true,
-    "saveErrorEvery": 4,
+    "saveErrorsEnabled": false,
+    "saveErrorEvery": 0,
     "fvuFailEvery": 0,
     "cbsFetchErrorsEnabled": false,
     "cbsFetchFailEvery": 0
@@ -57,7 +58,7 @@
     "versionNumber": "V1.1",
     "sequenceStart": 4,
     "claimTimeoutMinutes": 30,
-    "outputRoot": "D:\\centralprocessing\\ckyc\\runtime\\search"
+    "outputRoot": "D:\\ckyccentral\\ckyc\\runtime\\search"
   },
   "searchApi": {
     "enabled": true,
@@ -66,7 +67,7 @@
     "searchEndpoint": "/api/search",
     "timeoutSeconds": 30,
     "claimTimeoutMinutes": 30,
-    "simulateFoundEvery": 3
+    "simulateFoundEvery": 0
   },
   "documentGeneration": {
     "enabled": true,
@@ -106,12 +107,12 @@
   },
   "documentFetch": {
     "enabled": true,
-    "downloadRoot": "D:\\centralprocessing\\ckyc\\runtime\\document-fetch",
+    "downloadRoot": "D:\\ckyccentral\\ckyc\\runtime\\document-fetch",
     "channels": {
       "beckyc": {
         "enabled": true,
         "kind": "Sftp",
-        "useRealSftp": true,
+        "useRealSftp": false,
         "host": "sftp-beckyc.example.in",
         "port": 22,
         "username": "",
@@ -130,7 +131,7 @@
     }
   },
   "sftp": {
-    "enabled": true,
+    "enabled": false,
     "exePath": "D:\\ckyccentral\\vendor\\SFTP_Utility_windows\\SFTPRunner.exe",
     "workspaceRoot": "runtime/sftp",
     "outboundRoot": "runtime/sftp/outbound",
@@ -146,7 +147,8 @@
       "port": 18888
     },
     "timeoutSeconds": 600,
-    "useRealSftp": true,
+    "useRealSftp": false,
     "archiveUploadedFiles": true
   }
 }
+

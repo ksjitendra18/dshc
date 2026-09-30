@@ -19,7 +19,7 @@ namespace CKYC.Sftp.DocumentSources;
 /// </summary>
 public sealed class SftpDocumentSource : IDocumentSource
 {
-    private static readonly string[] SupportedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
+    private static readonly string[] SupportedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"];
 
     private readonly ChannelDocumentFetchSettings _settings;
     private readonly string _downloadRoot;
@@ -68,7 +68,7 @@ public sealed class SftpDocumentSource : IDocumentSource
                     var remotePath = $"{folder.TrimEnd('/')}/{name}";
                     using var buffer = new MemoryStream();
                     client.DownloadFile(remotePath, buffer);
-                    documents.Add(new FetchedDocument(name, buffer.ToArray(), remotePath));
+                    documents.Add(Publish(name, buffer.ToArray(), remotePath));
                 }
                 return documents;
             }
@@ -96,7 +96,7 @@ public sealed class SftpDocumentSource : IDocumentSource
             foreach (var name in selected)
             {
                 var path = Path.Combine(folder, name);
-                documents.Add(new FetchedDocument(name, File.ReadAllBytes(path), path));
+                documents.Add(Publish(name, File.ReadAllBytes(path), path));
             }
             return documents;
         }, ct);
@@ -149,6 +149,17 @@ public sealed class SftpDocumentSource : IDocumentSource
 
     private static bool IsSupported(string name)
         => SupportedExtensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Turns a downloaded file into a store-ready document. A beckyc <c>.txt</c> wrapper carrying
+    /// a <c>data:…;base64,</c> image is decoded and renamed to the real (sniffed) extension; every
+    /// other file is published unchanged.
+    /// </summary>
+    private static FetchedDocument Publish(string name, byte[] raw, string sourceReference)
+    {
+        var (publishedName, content) = EncodedDocumentContent.Normalize(name, raw);
+        return new FetchedDocument(publishedName, content, sourceReference);
+    }
 
     private SftpClient CreateClient()
     {

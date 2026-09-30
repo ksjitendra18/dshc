@@ -127,13 +127,38 @@ public sealed class DocumentFetchService
 
     private static string ResolveTarget(ChannelDocumentSettings? entry, Individual individual, string remoteName)
     {
+        var target = ResolveConfiguredTarget(entry, individual) ?? remoteName;
+        return AlignExtension(target, remoteName);
+    }
+
+    private static string? ResolveConfiguredTarget(ChannelDocumentSettings? entry, Individual individual)
+    {
         if (!string.IsNullOrWhiteSpace(entry?.Target)) return entry!.Target!.Trim();
         if (!string.IsNullOrWhiteSpace(entry?.Slot))
         {
             var current = RecordDocumentSlots.Resolve(individual, entry!.Slot!);
             if (!string.IsNullOrWhiteSpace(current)) return current;
         }
-        return remoteName;
+        return null;
+    }
+
+    private static readonly string[] DocumentExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
+
+    /// <summary>
+    /// Keeps the configured target's base name but forces its extension to match the fetched
+    /// content when the two disagree — e.g. a beckyc base64 <c>.txt</c> whose bytes are sniffed as
+    /// JPEG/PNG after the config guessed a different extension. The store validates the extension
+    /// against the content signature, so the extension is the authoritative part.
+    /// </summary>
+    private static string AlignExtension(string target, string remoteName)
+    {
+        var targetExtension = Path.GetExtension(target);
+        var contentExtension = Path.GetExtension(remoteName);
+        if (string.IsNullOrEmpty(targetExtension) || string.IsNullOrEmpty(contentExtension)) return target;
+        if (string.Equals(targetExtension, contentExtension, StringComparison.OrdinalIgnoreCase)) return target;
+        if (!DocumentExtensions.Contains(contentExtension, StringComparer.OrdinalIgnoreCase)
+            || !DocumentExtensions.Contains(targetExtension, StringComparer.OrdinalIgnoreCase)) return target;
+        return Path.ChangeExtension(target, contentExtension);
     }
 
     private async Task AdvanceAsync(MasterRecord record, string remarks, CancellationToken ct)

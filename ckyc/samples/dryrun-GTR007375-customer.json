@@ -1,0 +1,106 @@
+{
+  "customerId": "GTR007375",
+  "searchKey": "IOV26082643520327392",
+  "kycType": "N",
+  "name": {
+    "title": "Mr",
+    "firstName": "Satyendra",
+    "middleName": "",
+    "lastName": "Kumar"
+  },
+  "motherName": {
+    "title": "Mrs",
+    "firstName": "Sumitra",
+    "middleName": "",
+    "lastName": "Devi"
+  },
+  "fatherName": {
+    "title": "Mr",
+    "firstName": "Ram",
+    "middleName": "Karan",
+    "lastName": "Singh"
+  },
+  "dateOfBirth": "30-07-1977",
+  "minor": "N",
+  "gender": "M",
+  "nationality": "IN",
+  "nationalitySupportedByDocument": "Y",
+  "residentialStatus": "Resident",
+  "residentialStatusSupportedByDocument": "Y",
+  "differentlyAbledStatus": "N",
+
+  "genderProvidedInOvd": "Y",
+  "genderMatchWithOvd": "Y",
+  "dateOfBirthMatchWithOvd": "Y",
+  "nameMatchWithOvd": "Y",
+  "photoProvidedMatchWithOvd": "Y",
+
+  "pan": "AVUPS9778A",
+  "panVerified": "Y",
+  "photoOfIndividual": "Photo.jpg",
+
+  "proofs": [
+    {
+      "ovdType": "E",
+      "modeOfAadhaarVerification": "B",
+      "lengthOfAadhaar": "A",
+      "idNumber": "9674",
+      "certifiedCopyWithOriginal": "",
+      "modeOfAuthentication": "A",
+      "ekycDataFromUidai": "Y",
+      "copyOfOvd": "AdhaarAP.pdf"
+    }
+  ],
+
+  "permanentAddress": {
+    "line1": "C/O Sumitra Devi",
+    "line2": "Ward no 15 ",
+    "line3": "ranna",
+    "country": "IN",
+    "state": "BR",
+    "district": "614",
+    "city": "Shivaji Nagar",
+    "pinCode": "847105",
+    "addressSupportedWithDocument": "Y",
+    "addressMatchWithOvd": "Exact Match"
+  },
+
+  "currentAddressSameAsPermanent": "Y",
+  "currentAddress": {
+    "remoteGeoTagging": "N",
+    "positiveVerification": "Y",
+    "physicalVerificationByThirdParty": "N",
+    "physicalVerificationByReOfficial": "Y"
+  },
+
+  "contact": {
+    "email": "kumarsatyendrask77@gmail.com",
+    "countryCode": "+91",
+    "mobileNumber": "7000400756",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "Y"
+  },
+
+  "other": {
+    "remarks": "Individual dry-run record",
+    "videoKycWithoutOfficial": "N",
+    "videoKycWithReOfficial": "N",
+    "faceToFaceWithReOfficial": "Y",
+    "faceToFaceWithNonOfficial": "N",
+    "nonFaceToFace": "N",
+    "attestationDate": "29-09-2026",
+    "employeeName": "Sahilsharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "21171176839909",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN9797",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "clientConsent": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "29-09-2026"
+  }
+}

@@ -827,6 +827,49 @@ try
     if (!missing)
         throw new InvalidOperationException("A missing document-key folder did not block the record (expected DirectoryNotFoundException).");
 
+    // Beckyc also delivers the image as a data-URI base64 .txt inside the dockey folder. The source
+    // must decode it and rename it to the real (sniffed) type: the real sample labels a JPEG as
+    // image/png, so the bytes — not the declared mime — decide the stored extension.
+    var txtSettings = new DocumentFetchSettings
+    {
+        Enabled = true,
+        DownloadRoot = sourceScratch,
+        Channels = new Dictionary<string, ChannelDocumentFetchSettings>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["beckyc"] = new ChannelDocumentFetchSettings
+            {
+                Enabled = true,
+                Kind = "Sftp",
+                UseRealSftp = false,
+                BasePath = "x/y/z",
+                FolderPattern = "{dockey}",
+                Documents = new List<ChannelDocumentSettings>
+                {
+                    new() { Pattern = "*.txt", Target = "Photo.jpg", Slot = "photoOfIndividual" },
+                },
+            },
+        },
+    };
+    var txtSource = new DocumentSourceRegistry(txtSettings).Resolve("beckyc")!;
+
+    var jpegFolder = Path.Combine(sourceScratch, "inbox", "beckyc", "base64-jpeg");
+    Directory.CreateDirectory(jpegFolder);
+    var base64Jpeg = ValidDocumentBytes("payload.jpg", "base64-sample");
+    File.WriteAllText(Path.Combine(jpegFolder, "2148407522542412.txt"),
+        "data:image/png;base64," + Convert.ToBase64String(base64Jpeg));
+    var jpegFetched = await txtSource.FetchAsync(new DocumentFetchRequest("beckyc", "RJKS2026", "base64-jpeg"));
+    if (jpegFetched.Count != 1 || jpegFetched[0].RemoteName != "2148407522542412.jpg"
+        || !jpegFetched[0].Content.SequenceEqual(base64Jpeg))
+        throw new InvalidOperationException("A beckyc base64 .txt image was not decoded to its sniffed JPEG type.");
+
+    var pngFolder = Path.Combine(sourceScratch, "inbox", "beckyc", "base64-png");
+    Directory.CreateDirectory(pngFolder);
+    byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. System.Text.Encoding.ASCII.GetBytes("png-body")];
+    File.WriteAllText(Path.Combine(pngFolder, "shot.txt"), "data:image/jpeg;base64," + Convert.ToBase64String(png));
+    var pngFetched = await txtSource.FetchAsync(new DocumentFetchRequest("beckyc", "RJKS2026", "base64-png"));
+    if (pngFetched.Count != 1 || pngFetched[0].RemoteName != "shot.png" || !pngFetched[0].Content.SequenceEqual(png))
+        throw new InvalidOperationException("A base64 PNG was not renamed to the sniffed .png extension.");
+
     Console.WriteLine("All image/document fetch specification checks passed.");
 }
 finally

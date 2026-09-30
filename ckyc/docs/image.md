@@ -4,9 +4,10 @@ This is the working guide for the **pre-search image step** (`documents fetch`).
 find out how the real beckyc SFTP folder is laid out: find your case below and edit
 **`appsettings.json` → `documentFetch` → `channels.beckyc`**.
 
-> Status today: the config ships with a **placeholder** host and a guessed file name
-> (`image.jpg`). Nothing is wired to the real server yet — that's expected. Change the values
-> below once you inspect the folder.
+> Status today: the connection fields ship with a **placeholder** host. The real beckyc layout is
+> known: the image arrives as a **base64 `.txt`** inside the dockey folder
+> (`<basePath>/<dockey>/<file>.txt`), and `documents fetch` decodes it automatically — see
+> [§3A](#a-the-image-arrives-as-a-base64-txt-current-beckyc-layout).
 
 - Config file: `ckyc/appsettings.json`
 - Code (transport): `src/CKYC.Sftp/DocumentSources/SftpDocumentSource.cs`
@@ -24,7 +25,7 @@ to the customer id when blank):
 
 ```
 <basePath> / <folderPattern with {dockey} replaced> / <remote>
-   x/y/z    /         9f2c7a4e81b3d6f0a5c2           / image.jpg
+   x/y/z    /         9f2c7a4e81b3d6f0a5c2           / 2148407522542412.txt
 ```
 
 > **The dockey is not the customer id.** `RJKS2026` is the customer id; the document key is a
@@ -37,7 +38,7 @@ Rules the code enforces:
 | Folder listing is **top-level only** (non-recursive) | Files inside subfolders are ignored |
 | `remote` matches a **file name**, not a path | Cannot contain `/` |
 | Matching is **case-insensitive** | `image.JPG` matches `image.jpg` |
-| Supported extensions | `.pdf`, `.jpg`, `.jpeg`, `.png` only |
+| Supported extensions | `.pdf`, `.jpg`, `.jpeg`, `.png` — plus `.txt` (a base64 data-URI image/PDF that is decoded on fetch) |
 | `basePath` is relative to the SFTP login home | Leading/trailing `/` are trimmed |
 | Missing folder or no matching file | Record is blocked at **`ImageFailed` (`IMF`)** and retryable |
 
@@ -66,7 +67,7 @@ Rules the code enforces:
 |-------|---------|-------|
 | `remote` | Exact remote file name inside the dockey folder | **Blocks the record if it isn't found** |
 | `pattern` | Glob (`*`, `?`) matched against file names; used when `remote` is empty | Case-insensitive |
-| `target` | Name the bytes are stored as in the DB | Defaults to the slot's current record name, then the remote name. **Extension must match content type** |
+| `target` | Name the bytes are stored as in the DB | Defaults to the slot's current record name, then the remote name. The extension is forced to the fetched content's real type (sniffed for decoded `.txt` payloads) |
 | `slot` | Record field to point at `target` | Without it, the file is stored but not referenced by the record |
 | `enabled` | Skip this entry without deleting it | Default `true` |
 
@@ -79,14 +80,24 @@ Valid `slot` values (from `RecordDocumentSlots`):
 
 ## 3. Examples — pick the one matching your folder
 
-### A. Folder contains exactly `image.jpg` (current assumption)
+### A. The image arrives as a base64 `.txt` (current beckyc layout)
+
+The dockey folder contains a `.txt` whose whole content is a data URI:
+
+```
+data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...
+```
+
+Match the `.txt` and give the target a name; the decode + real extension are automatic:
 
 ```jsonc
 "documents": [
-  { "remote": "image.jpg", "target": "Photo.jpg", "slot": "photoOfIndividual" }
+  { "pattern": "*.txt", "target": "Photo.jpg", "slot": "photoOfIndividual" }
 ]
 ```
-Downloads `x/y/z/<dockey>/image.jpg`, stores it as `Photo.jpg`, sets the record's photo.
+Downloads `x/y/z/<dockey>/<file>.txt`, sniffs the decoded bytes and stores them under the real
+type — so the sample above (JPEG bytes labelled `image/png`) becomes `Photo.jpg`. A PNG payload
+becomes `Photo.png`. No `remote` is set because the `.txt` basename varies.
 
 ### B. File name varies / different case (`photo.jpg`, `Photo.JPG`, `img_001.jpg`)
 
@@ -169,7 +180,7 @@ logic and slot mapping without touching the network:
 Then place the file at:
 
 ```
-runtime/document-fetch/inbox/beckyc/<dockey>/image.jpg
+runtime/document-fetch/inbox/beckyc/<dockey>/<file>.txt
 ```
 
 and run:
@@ -190,8 +201,10 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 |---------------|--------------|-----|
 | `The SFTP folder for document key '<k>' does not exist: '<path>'` | Wrong `basePath`, `folderPattern`, or dockey | Check `x/y/z/<dockey>`; adjust `basePath` / `folderPattern` |
 | `Expected file '<remote>' ... was not found in '<folder>'` | File isn't named exactly `remote`, or wrong extension | Use a `pattern`, or correct `remote` (case matters only for clarity — matching is case-insensitive) |
-| `No matching supported document was found ...` | Folder has only unsupported types, or files are in a subfolder | Use a supported extension; move the subfolder into `folderPattern` |
-| `The content signature does not match image/jpeg` | `target` extension ≠ actual content (e.g. PNG stored as `.jpg`) | Make `target`'s extension match the bytes |
+| `No matching supported document was found ...` | Folder has only unsupported types, or files are in a subfolder | Use a supported extension (`*.txt` included); move the subfolder into `folderPattern` |
+| `The document '<n>' contains a base64 payload that could not be decoded` | A `.txt` matched but isn't valid base64 / a data URI | Confirm the sender writes `data:<mime>;base64,<payload>`; fix the source |
+| `The base64 document '<n>' decoded to an unsupported content type` | Decoded bytes are not JPEG/PNG/PDF | Only those types are supported; check what the sender is embedding |
+| `The content signature does not match image/jpeg` | A raw file's `target` extension ≠ its content (a decoded `.txt` is sniffed, so this means a non-`.txt` file) | Let the extension follow the content, or fix the source file |
 | Record stuck at `IMF` (ImageFailed) | Any of the above; fetch threw | Fix config, then `retry --activity ImageFetch` |
 | `documents fetch` says "No records awaiting an image/document" | No records at `IMP` — `store` wasn't run, or the channel has no source | Run `store`; ensure `documentFetch.enabled=true` and the beckyc channel `enabled=true` |
 | `build-zip` skips the record / missing doc in `support_docs` | Fetched file imported, but no `slot` repointed the record | Add `slot` (or set `target` to the name the record references) |

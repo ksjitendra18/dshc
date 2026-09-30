@@ -10,7 +10,7 @@ Each channel has its own source because the image lives in a different place per
 ```
 fetch cust  ->  store  ->  documents fetch  ->  search-customer  ->  build-zip
                   |              |
-                  |       beckyc SFTP: <basePath>/<dockey>/image.jpg
+                  |       beckyc SFTP: <basePath>/<dockey>/<file>.txt (base64 data-URI image/PDF)
                   |
         channel source configured ? ImagePending (IMP) : PendingSearch
 ```
@@ -82,9 +82,9 @@ else, set the exact name once in config and it is used first:
       "folderPattern": "{dockey}",       // folder under basePath; {dockey} is substituted
       "timeoutSeconds": 60,
       "documents": [
-        // download <basePath>/<dockey>/image.jpg, store it as Photo.jpg and point the
-        // record's photo slot at it. Omit "target" to keep the record's current file name.
-        { "remote": "image.jpg", "target": "Photo.jpg", "slot": "photoOfIndividual" }
+        // download the base64 .txt in <basePath>/<dockey>/, decode it, store it as Photo.jpg
+        // and point the record's photo slot at it. Omit "target" to keep the record's current name.
+        { "pattern": "*.txt", "target": "Photo.jpg", "slot": "photoOfIndividual" }
       ]
     }
   }
@@ -96,17 +96,39 @@ else, set the exact name once in config and it is used first:
   under its own name.
 * **`target`** — the file name the bytes are stored/imported as. Defaults to the slot's current
   record file name, then the remote name. The extension must match the content type
-  (PDF / JPG / JPEG / PNG).
+  (PDF / JPG / JPEG / PNG); if it does not, it is corrected to the fetched content's real
+  extension (see below).
 * **`slot`** — record document slot to point at the fetched file (`photoOfIndividual`,
   `proofOvd`, `panDocument`, `currentAddressOvd`, `permanentAddressOvd`, `clientConsent`,
   `declarationDocument`).
+
+### Base64 `.txt` payloads (beckyc)
+
+`beckyc` delivers the image inside a `.txt` file — a single `data:<mime>;base64,<payload>` line,
+e.g.:
+
+```
+data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...
+```
+
+`documents fetch` decodes it automatically and stores the raw image/PDF bytes. Notes:
+
+* **The declared mime type is not trusted** — the real content type is sniffed from the decoded
+  bytes (JPEG `FF D8 FF`, PNG `89 50 4E 47…`, PDF `%PDF-`). A payload labelled `image/png` whose
+  bytes are JPEG is stored as a **`.jpg`**.
+* The stored name keeps the configured `target` base name but takes the real extension: with
+  `"target": "Photo.jpg"` a PNG payload is stored as `Photo.png`.
+* A `.txt` that is neither a data URI nor (for a `.txt` file) valid base64 is passed through
+  unchanged and then fails the store's extension check, blocking the record at `IMF`.
+* `remote`/`pattern` select the `.txt`; the decoded file is published under the sniffed
+  extension, not the `.txt` name.
 
 ### Offline / simulated transport
 
 Set `useRealSftp=false` to serve the same layout from a local inbox — useful for CI and demos:
 
 ```
-<downloadRoot>/inbox/<channel>/<dockey>/image.jpg
+<downloadRoot>/inbox/<channel>/<dockey>/<file>.txt
 ```
 
 ## Commands
