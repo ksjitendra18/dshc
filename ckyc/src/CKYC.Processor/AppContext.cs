@@ -36,7 +36,9 @@ public sealed class AppContext
 
         CrmData = new DummyCrmDataProvider();
         CrmLegalEntities = new DummyCrmLegalEntityProvider();
-        Crm = new HttpCrmApiClient(settings.Crm);
+        Crm = string.Equals(settings.Crm.Mode, "Bank", StringComparison.OrdinalIgnoreCase)
+            ? new BankCrmApiClient(settings.Crm)
+            : new HttpCrmApiClient(settings.Crm);
         CrmServer = new CrmServer(CrmData, CustomerIds);
 
         SearchApi = string.Equals(settings.SearchApi.Mode, "Http", StringComparison.OrdinalIgnoreCase)

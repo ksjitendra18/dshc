@@ -180,15 +180,34 @@ public sealed class SourceSettings
     public string? DocumentKeyProperty { get; set; }
 }
 
-/// <summary>Dummy CRM API wiring. Replace with the production endpoint later.</summary>
+/// <summary>CRM API wiring.</summary>
 public sealed class CrmSettings
 {
     // InProcess: an embedded Kestrel server is launched by `crm serve` and used directly.
     // Http: a remote client pointed at an external API (production).
+    // Bank: the real bank private-gateway CRM (CKYC2SFTP / CKYC2Retail*) — one endpoint per
+    //       CKYC record type, each called with POST {"custId", "identifier"}.
     public string Mode { get; set; } = "InProcess";
     public string BaseUrl { get; set; } = "http://127.0.0.1:5291";
     public string CustomersEndpoint { get; set; } = "/api/customers/{id}";
     public string ListEndpoint { get; set; } = "/api/customers";
+
+    // ---- Bank private-gateway endpoints (Mode = "Bank"). Blank = section not fetched. ----
+    public string DemographicsEndpoint { get; set; } = string.Empty;  // record 20
+    public string PoiEndpoint { get; set; } = string.Empty;           // record 30
+    public string AddressEndpoint { get; set; } = string.Empty;       // record 40
+    public string ContactEndpoint { get; set; } = string.Empty;       // record 50
+    public string OtherDetailsEndpoint { get; set; } = string.Empty;  // record 70
+
+    /// <summary>Value of the <c>identifier</c> field in the bank request body.</summary>
+    public string Identifier { get; set; } = "CRM";
+
+    /// <summary>
+    /// Optional static headers sent with every bank request (API key / bearer token /
+    /// basic-auth). Configured per environment; keys are header names, values are raw values.
+    /// </summary>
+    public Dictionary<string, string> Headers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public int TimeoutSeconds { get; set; } = 30;
 }
 
