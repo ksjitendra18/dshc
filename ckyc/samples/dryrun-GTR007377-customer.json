@@ -1,0 +1,105 @@
+{
+  "customerId": "GTR007377",
+  "searchKey": "IOV26082643520327394",
+  "kycType": "M",
+  "name": {
+    "title": "Ms",
+    "firstName": "Ananya",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "motherName": {
+    "title": "Mrs",
+    "firstName": "Kavita",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "fatherName": {
+    "title": "Mr",
+    "firstName": "Rahul",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "dateOfBirth": "15-08-2012",
+  "minor": "Y",
+  "gender": "F",
+  "nationality": "IN",
+  "nationalitySupportedByDocument": "Y",
+  "residentialStatus": "Resident",
+  "residentialStatusSupportedByDocument": "Y",
+  "differentlyAbledStatus": "N",
+
+  "genderProvidedInOvd": "Y",
+  "genderMatchWithOvd": "Y",
+  "dateOfBirthMatchWithOvd": "Y",
+  "nameMatchWithOvd": "Y",
+  "photoProvidedMatchWithOvd": "Y",
+
+  "form97Provided": "Y",
+  "photoOfIndividual": "Photo.jpg",
+
+  "proofs": [
+    {
+      "ovdType": "E",
+      "modeOfAadhaarVerification": "B",
+      "lengthOfAadhaar": "A",
+      "idNumber": "8765",
+      "certifiedCopyWithOriginal": "",
+      "modeOfAuthentication": "A",
+      "ekycDataFromUidai": "Y",
+      "copyOfOvd": "AdhaarAP.pdf"
+    }
+  ],
+
+  "permanentAddress": {
+    "line1": "C/O Kavita Verma",
+    "line2": "Ward no 15 ",
+    "line3": "ranna",
+    "country": "IN",
+    "state": "BR",
+    "district": "614",
+    "city": "Shivaji Nagar",
+    "pinCode": "847105",
+    "addressSupportedWithDocument": "Y",
+    "addressMatchWithOvd": "Exact Match"
+  },
+
+  "currentAddressSameAsPermanent": "Y",
+  "currentAddress": {
+    "remoteGeoTagging": "N",
+    "positiveVerification": "Y",
+    "physicalVerificationByThirdParty": "N",
+    "physicalVerificationByReOfficial": "Y"
+  },
+
+  "contact": {
+    "email": "vermaananya77@gmail.com",
+    "countryCode": "+91",
+    "mobileNumber": "7000400758",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "Y"
+  },
+
+  "other": {
+    "remarks": "Minor dry-run record (age ten to seventeen, no guardian block)",
+    "videoKycWithoutOfficial": "N",
+    "videoKycWithReOfficial": "N",
+    "faceToFaceWithReOfficial": "Y",
+    "faceToFaceWithNonOfficial": "N",
+    "nonFaceToFace": "N",
+    "attestationDate": "01-10-2026",
+    "employeeName": "Sahilsharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "21171176839909",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN9797",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "clientConsent": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "01-10-2026"
+  }
+}

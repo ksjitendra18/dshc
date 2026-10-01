@@ -5,7 +5,10 @@ Each step has a **Check** line — confirm it before moving on.
 
 > Inputs: `samples\dryrun-GTR007375-source.json` (customer id + dockey, done) ·
 > `samples\dryrun-GTR007375-customer.json` (customer details, **you fill this in**) ·
-> the beckyc `.txt` payload (step 2).
+> the beckyc `.txt` payload (step 2) · the `doc_format\` templates (shipped with the repo).
+> The batch carries **four** documents: `Photo.jpg` **fetched** from beckyc, plus `AdhaarAP.pdf`
+> (**Aadhaar generation**), `C3.pdf` (**consent generation**) and `D1.pdf` (the **static
+> declaration**) rendered from the templates at `build-zip` — see steps 9 and 12.
 > Offline: local inbox + simulated FVU. Database: `CkycCentral_DryRun` (existing `CkycCentral` untouched).
 
 ---
@@ -20,7 +23,13 @@ $exe = ".\src\CKYC.Processor\bin\Release\net10.0\CKYC.Processor.exe"
 $st  = ".\samples\settings-dryrun-GTR007375.json"
 ```
 
-**Check:** `Test-Path $exe` → `True`.
+**Check:** `Test-Path $exe` → `True`, and the generation templates are present:
+
+```powershell
+Test-Path .\doc_format\Aadhaar_template_blank.jpg, .\doc_format\Consent_template_blank.png, .\doc_format\Template_1.pdf
+```
+
+→ `True  True  True`.
 
 ---
 
@@ -116,6 +125,10 @@ sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral_DryRun -b -Q "UPDATE master_re
 **Check:** `[documents] [GTR007375] fetched 1 document(s) from beckyc: Photo.jpg -> PendingSearch`
 and `Fetched=1  Failed=0`. Status → `SRP`.
 
+> This step fetches **only the photo**. The record's other three documents — `AdhaarAP.pdf`
+> (Aadhaar generation), `C3.pdf` (consent generation) and `D1.pdf` (static declaration) — are
+> **rendered at `build-zip`** from the `doc_format\` templates; they are verified in steps 9 and 12.
+
 > If you get `ImageFailed` (`IMF`): the inbox file is missing — redo Step 2, then
 > `& $exe retry --activity ImageFetch --settings $st`.
 
@@ -131,14 +144,31 @@ and `Fetched=1  Failed=0`. Status → `SRP`.
 
 ---
 
-## Step 9 — generate the batch (.UPL + zip)
+## Step 9 — generate the batch (.UPL + zip) ← also renders the Aadhaar / consent / declaration
 
 ```powershell
 & $exe build-zip --settings $st
 ```
 
-**Check:** `Skipped : none` → status `BAT`. **Note the printed `Batch` key** (e.g.
-`I_IRA000337_IN9797_<ddmmyyyy>_00064`).
+**Check:** the first line says the three supporting documents were rendered, and `Skipped : none`
+→ status `BAT`:
+
+```
+[build-zip] Generated 3 supporting document(s) for this batch.
+[build-zip] Batch 'I_IRA000337_IN9797_<ddmmyyyy>_00064' generated with 1 record(s).
+[build-zip]   Skipped     : none
+```
+
+`Generated 3 supporting document(s)` = **Aadhaar generation** (`AdhaarAP.pdf` — the EKYC report
+with the fetched photo overlaid), **consent generation** (`C3.pdf` — the Annexure-1 client
+consent) and the **static declaration** (`D1.pdf` — attached unchanged). They are rendered from
+the templates in `doc_format\` straight into `support_docs`; there is nothing to stage by hand.
+
+**Note the printed `Batch` key** (e.g. `I_IRA000337_IN9797_<ddmmyyyy>_00064`).
+
+> If that line is missing (or `build-zip` fails with `... have not been imported: AdhaarAP.pdf,
+> D1.pdf, C3.pdf`), the three documents were not rendered — check the template check in step 0
+> and see `docs\dryrun-GTR007375.md` §6.
 
 ---
 
@@ -163,27 +193,50 @@ and `Fetched=1  Failed=0`. Status → `SRP`.
 
 ---
 
-## Step 12 — verify the data and the batch
+## Step 12 — verify the data, the fetched photo and the generated documents
 
 ```powershell
 # master row: dockey + final status
 sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral_DryRun -h -1 -W -Q "SET NOCOUNT ON; SELECT CustomerId, DocumentKey, Source, StatusCode, LastError FROM master_record;"
 
-# the fetched document
+# the fetched document (the generated Aadhaar/consent/declaration are NOT stored here)
 sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral_DryRun -h -1 -W -Q "SET NOCOUNT ON; SELECT d.OriginalFileName, d.MediaType, d.SourceType, c.ByteLength FROM individual_document d JOIN master_record m ON m.Id = d.MasterRecordId JOIN file_content c ON c.Id = d.FileContentId WHERE m.CustomerId = 'GTR007375';"
 
-# the batch's supporting documents
+# the batch's supporting documents (fetched + generated)
 Get-ChildItem .\runtime\output -Recurse -Filter 'support_docs' -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { Get-ChildItem $_.FullName | Select-Object Name, Length }
 ```
 
 **Check:**
 
 - master row: `GTR007375  0871808577544330  beckyc  UPL  NULL`
-- document: `Photo.jpg` · `image/jpeg` · `Sftp`
+- document: `Photo.jpg` · `image/jpeg` · `Sftp` — only the **fetched** file lands in the document
+  store; the three generated documents live inside the batch only.
 - `support_docs`: `Photo.jpg` (fetched) + `AdhaarAP.pdf`, `C3.pdf`, `D1.pdf` (generated)
 
-Open `runtime\output\<BATCHKEY>\upload\support_docs\AdhaarAP.pdf` — the fetched photo should be
-overlaid in the top-left frame.
+Open each generated document in `runtime\output\<BATCHKEY>\upload\support_docs\`:
+
+| File | Generation | Check inside | Record slot |
+|---|---|---|---|
+| `AdhaarAP.pdf` | Aadhaar | the fetched photo is overlaid in the top-left frame; name, `XXXX XXXX <last4>`, gender, DOB and permanent address match the record | `proofOvd`, `currentAddressOvd` |
+| `C3.pdf` | consent | client name, relation, reporting entity, Aadhaar no, PAN and declaration date; the Aadhaar/PAN ticks (`X`) are drawn | `clientConsent` |
+| `D1.pdf` | static | the declaration is the template attached unchanged (`doc_format\Template_1.pdf`) | `declarationDocument` |
+
+The four file names are also referenced by the `.UPL` and packed in the batch zip — verify with:
+
+```powershell
+$upl = Get-ChildItem .\runtime\output -Recurse -Filter '*.UPL' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$upl.FullName
+([regex]::Matches([IO.File]::ReadAllText($upl.FullName), '[^|]+\.(?:pdf|jpg|jpeg|png)') | ForEach-Object Value) | Sort-Object -Unique
+
+$zip = Get-ChildItem .\runtime\output -Recurse -Filter '*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+$archive.Entries | Select-Object FullName, Length | Format-Table -AutoSize
+$archive.Dispose()
+```
+
+Expect the four names (`Photo.jpg`, `AdhaarAP.pdf`, `C3.pdf`, `D1.pdf`) and all four
+`upload/support_docs/*` entries in the zip listing.
 
 ---
 
@@ -195,6 +248,10 @@ Reset to the image gate, then re-run Step 7 onward:
 sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral_DryRun -b -Q "UPDATE master_record SET Status = 15, StatusCode = 'IMP', IsImageFetched = 0 WHERE CustomerId = 'GTR007375';"
 & $exe documents fetch --customer GTR007375 --settings $st
 ```
+
+`build-zip` re-renders `AdhaarAP.pdf` (Aadhaar), `C3.pdf` (consent) and `D1.pdf` (static
+declaration) from the current record data on every run — there are no stale generated documents
+to clean up.
 
 ## Switch to the real beckyc SFTP
 

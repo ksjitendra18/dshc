@@ -1,0 +1,112 @@
+{
+  "customerId": "GTR007376",
+  "searchKey": "IOV26082643520327393",
+  "kycType": "M",
+  "name": {
+    "title": "Ms",
+    "firstName": "Ishita",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "motherName": {
+    "title": "Mrs",
+    "firstName": "Kavita",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "fatherName": {
+    "title": "Mr",
+    "firstName": "Rahul",
+    "middleName": "",
+    "lastName": "Verma"
+  },
+  "dateOfBirth": "12-06-2019",
+  "minor": "Y",
+  "gender": "F",
+  "nationality": "IN",
+  "nationalitySupportedByDocument": "Y",
+  "residentialStatus": "Resident",
+  "residentialStatusSupportedByDocument": "Y",
+  "differentlyAbledStatus": "N",
+
+  "genderProvidedInOvd": "Y",
+  "genderMatchWithOvd": "Y",
+  "dateOfBirthMatchWithOvd": "Y",
+  "nameMatchWithOvd": "Y",
+  "photoProvidedMatchWithOvd": "Y",
+
+  "form97Provided": "Y",
+  "photoOfIndividual": "Photo.jpg",
+
+  "proofs": [
+    {
+      "ovdType": "E",
+      "modeOfAadhaarVerification": "B",
+      "lengthOfAadhaar": "A",
+      "idNumber": "4321",
+      "certifiedCopyWithOriginal": "",
+      "modeOfAuthentication": "A",
+      "ekycDataFromUidai": "Y",
+      "copyOfOvd": "AdhaarAP.pdf"
+    }
+  ],
+
+  "relatedParties": [
+    {
+      "relatedPersonType": "Guardian",
+      "ckycNumberOfRelatedPerson": "33720047736138"
+    }
+  ],
+
+  "permanentAddress": {
+    "line1": "C/O Kavita Verma",
+    "line2": "Ward no 15 ",
+    "line3": "ranna",
+    "country": "IN",
+    "state": "BR",
+    "district": "614",
+    "city": "Shivaji Nagar",
+    "pinCode": "847105",
+    "addressSupportedWithDocument": "Y",
+    "addressMatchWithOvd": "Exact Match"
+  },
+
+  "currentAddressSameAsPermanent": "Y",
+  "currentAddress": {
+    "remoteGeoTagging": "N",
+    "positiveVerification": "Y",
+    "physicalVerificationByThirdParty": "N",
+    "physicalVerificationByReOfficial": "Y"
+  },
+
+  "contact": {
+    "email": "vermakavita77@gmail.com",
+    "countryCode": "+91",
+    "mobileNumber": "7000400757",
+    "mobileValidatedViaOtp": "Y",
+    "emailValidatedViaOtp": "Y",
+    "mobileValidatedViaThirdParty": "Y"
+  },
+
+  "other": {
+    "remarks": "Minor dry-run record (guardian below ten)",
+    "videoKycWithoutOfficial": "N",
+    "videoKycWithReOfficial": "N",
+    "faceToFaceWithReOfficial": "Y",
+    "faceToFaceWithNonOfficial": "N",
+    "nonFaceToFace": "N",
+    "attestationDate": "01-10-2026",
+    "employeeName": "Sahilsharma",
+    "employeeCode": "PNB4437",
+    "employeeDesignation": "SM",
+    "employeeBranch": "SansadMarg",
+    "employeeCkycId": "21171176839909",
+    "institutionName": "Punjab National Bank UAT",
+    "institutionCode": "IN9797",
+    "declarationDocument": "D1.pdf",
+    "declarationFlag": "Y",
+    "clientConsent": "C3.pdf",
+    "place": "Mumbai",
+    "declarationDate": "01-10-2026"
+  }
+}

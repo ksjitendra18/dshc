@@ -71,7 +71,7 @@
   },
   "documentGeneration": {
     "enabled": true,
-    "templateRoot": "doc_format",
+    "templateRoot": "D:\\ckyccentral\\ckyc\\doc_format",
     "documents": [
       {
         "kind": "Static",

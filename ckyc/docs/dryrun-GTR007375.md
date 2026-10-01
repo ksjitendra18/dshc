@@ -5,7 +5,8 @@ without touching the existing database:
 
 ```
 fetch --file  ->  insert --file  ->  (image gate)  ->  documents fetch (beckyc .txt)
-              ->  search-customer  ->  build-zip  ->  fvu  ->  status
+              ->  search-customer  ->  build-zip (+ Aadhaar / consent / declaration generation)
+              ->  fvu  ->  status
 ```
 
 | | |
@@ -16,11 +17,14 @@ fetch --file  ->  insert --file  ->  (image gate)  ->  documents fetch (beckyc .
 | Database | dedicated LocalDB **`CkycCentral_DryRun`** (the existing `CkycCentral` is not modified) |
 | CRM | not used — `insert` fills omissions from the in-process dummy provider |
 | beckyc transport | `useRealSftp = false` → reads `runtime\document-fetch\inbox\beckyc\<dockey>\*.txt` |
+| Batch documents | `Photo.jpg` **fetched** from beckyc + `AdhaarAP.pdf` (Aadhaar generation), `C3.pdf` (consent generation), `D1.pdf` (static declaration) **rendered at `build-zip`** from `doc_format\` — see §1c |
 | FVU | `useRealFvu = false` → deterministic local simulation (no network, instant) |
 
 Everything that matters — the dockey → folder mapping, the base64 `.txt` decode, the real-extension
-sniff, the `photoOfIndividual` slot repoint, the image gate (`IMP` → `SRP`) and the Aadhaar photo
-overlay — is the **real** code path.
+sniff, the `photoOfIndividual` slot repoint, the image gate (`IMP` → `SRP`), the Aadhaar photo
+overlay and the Aadhaar/consent/declaration renderers — is the **real** code path. Only the fetched
+document is persisted to the document store; the three generated documents are rendered into the
+batch's `support_docs` at `build-zip` and are not written to the database.
 
 ---
 
@@ -30,9 +34,10 @@ overlay — is the **real** code path.
 |---|---|---|
 | `samples\dryrun-GTR007375-source.json` | Step-1 source record: customer id + **dockey** + channel | already filled in |
 | `samples\dryrun-GTR007375-customer.json` | The **customer details** written by `insert` | **you** (replace with the real details) |
-| `samples\settings-dryrun-GTR007375.json` | Full settings override (dedicated DB, repo-local paths, offline SFTP/FVU, clean simulation) | ready to use |
+| `samples\settings-dryrun-GTR007375.json` | Full settings override (dedicated DB, repo-local paths, offline SFTP/FVU, clean simulation, **absolute `documentGeneration.templateRoot`**) | ready to use |
 | `samples\settings-dryrun-GTR007375-realfvu.json` | Same override with `fvu.useRealFvu = true` (real `FVU_RUN_UTILITY.exe`); verified `Passed=true` | ready to use |
 | `scripts\make-dryrun-beckyc-txt.ps1` | Writes/wraps the beckyc `.txt` payload into the local inbox | ready to use |
+| `doc_format\Aadhaar_template_blank.jpg` · `Consent_template_blank.png` · `Template_1.pdf` | Templates `build-zip` fills — Aadhaar EKYC report / client consent / static declaration | shipped with the repo |
 | `docs\image.md` · `docs\document-fetch.md` | Background on the beckyc layout / fetch step | reference |
 
 > `--settings` is a **full replacement**, not a merge, so every command below passes the same
@@ -111,12 +116,53 @@ Keep it **FVU-valid**; the fields that must be right for `build-zip` to pass are
 | `photoOfIndividual` | `Photo.jpg` — the fetch repoints this slot at the file it pulls |
 
 Everything else (proofs, permanent address, contact, attestation/`other`) is optional: when omitted
-`insert` borrows FVU-valid defaults from the in-process dummy provider. References to
-`AdhaarAP.pdf`, `C3.pdf` and `D1.pdf` are satisfied at `build-zip` by `documentGeneration`; the
-`Photo.jpg` reference is satisfied by the **beckyc fetch**.
+`insert` borrows FVU-valid defaults from the in-process dummy provider. The record's document
+references are satisfied in the batch like this:
+
+| Reference | Record slot | Satisfied by |
+|---|---|---|
+| `Photo.jpg` | `photoOfIndividual` | **beckyc fetch** (step 4 — the `.txt` decoded + sniffed) |
+| `AdhaarAP.pdf` | `proofOvd`, `currentAddressOvd` | **Aadhaar generation** at `build-zip` (§1c) |
+| `C3.pdf` | `clientConsent` | **consent generation** at `build-zip` (§1c) |
+| `D1.pdf` | `declarationDocument` | **static declaration** at `build-zip` (§1c) |
 
 > If you add a `panDocument` (or any other extra document reference), place that file too — either
 > stage it and `documents import`, or `build-zip` will skip the record.
+
+### 1c. The generated supporting documents — Aadhaar · consent · static declaration
+
+`documentGeneration` (enabled in both dry-run settings files) renders three documents at
+`build-zip` and injects them straight into the batch's `support_docs`:
+
+| File | Generation | Template | Slots | Channels |
+|---|---|---|---|---|
+| `AdhaarAP.pdf` | **Aadhaar** | `Aadhaar_template_blank.jpg` | `proofOvd`, `currentAddressOvd` | `beckyc` |
+| `C3.pdf` | **consent** | `Consent_template_blank.png` | `clientConsent` | `beckyc` |
+| `D1.pdf` | **static declaration** | `Template_1.pdf` | `declarationDocument` | every channel |
+
+* The Aadhaar renderer prints the record's name, masked Aadhaar (`XXXX XXXX <last4>`), gender, DOB
+  and permanent address onto the blank report, and overlays the customer's photo — read from the
+  record's `photoOfIndividual` (i.e. the file fetched in step 4) — inside the printed frame.
+* The consent renderer prints the client name, relation, reporting entity, Aadhaar no, PAN and
+  declaration date onto the Annexure-1 template (the Aadhaar/PAN ticks are drawn when those values
+  are present).
+* The static declaration is the template attached unchanged.
+* Generation is deterministic and in-memory: the bytes are **not** written to the document store,
+  the stored record rows are not modified, and every `build-zip` re-renders from the current
+  record data. A generated file **supersedes** a stored/imported copy with the same name.
+* `templateRoot` must point at the `doc_format` folder. Both dry-run settings pin it to the
+  absolute `D:\ckyccentral\ckyc\doc_format`, so `build-zip` works from any working directory. With
+  a relative value it resolves against the process working directory — run the command from
+  anywhere else and generation finds no templates and the batch fails (see §6).
+* `build-zip` logs `Generated 3 supporting document(s) for this batch.` on success. If it cannot
+  render them (template missing, `enabled=false`, or the record's channel is not in the document's
+  `channels`), the three references stay unsatisfied and the record is **skipped** — the batch
+  fails with `... supporting documents have not been imported: AdhaarAP.pdf, D1.pdf, C3.pdf`.
+* The four documents together are far below the 500 KB per-customer supporting-document limit; a
+  real photo or template that pushes the total over it fails the same document check.
+* To attach your own files instead of the rendered ones, set `documentGeneration.enabled=false` and
+  stage + `documents import` them (the repo ships copies in `staging\CUST-RETAIL-SKSS\`); the batch
+  then uses the imported bytes.
 
 ---
 
@@ -217,7 +263,10 @@ Expected:
 [build-zip]   Skipped     : none
 ```
 
-`Skipped : none` is the success condition. Status → **`BAT` (Batched)**.
+`Skipped : none` is the success condition. Status → **`BAT` (Batched)**. The first line —
+`Generated 3 supporting document(s)` — is the Aadhaar / consent / static-declaration render (§1c);
+it is what fills the three generated references. If it is absent, the record is skipped with a
+missing-document error instead (see §6).
 
 ### Step 7 — validate (simulated FVU)
 
@@ -281,15 +330,28 @@ decoded payload).
 
 **The batch contents** — open `runtime\output\<BATCHKEY>\upload\support_docs\`:
 
-| File | Source |
-|---|---|
-| `Photo.jpg` | **fetched from beckyc** (the `.txt` decoded + sniffed) |
-| `AdhaarAP.pdf` | generated — Aadhaar EKYC report, with the fetched photo overlaid into the frame |
-| `C3.pdf` | generated — Annexure-1 client consent |
-| `D1.pdf` | generated — undertaking |
+| File | Source | What to check |
+|---|---|---|
+| `Photo.jpg` | **fetched from beckyc** (the `.txt` decoded + sniffed) | the only document in the store (`individual_document`, `SourceType = Sftp`) |
+| `AdhaarAP.pdf` | generated — Aadhaar EKYC report | fetched photo overlaid in the top-left frame; name, masked Aadhaar, gender, DOB and address match the record |
+| `C3.pdf` | generated — Annexure-1 client consent | client name, relation, reporting entity, Aadhaar no, PAN, declaration date |
+| `D1.pdf` | generated — static declaration (template attached unchanged) | matches `doc_format\Template_1.pdf` |
 
-Open `AdhaarAP.pdf`: the customer photo should sit in the top-left frame and the printed values
-should match the record.
+All four names are referenced in the `.UPL` and packed in `<BATCHKEY>.zip`. Generation details and
+the exact templates/slots for the last three are in §1c.
+
+```powershell
+# the .UPL document references
+$upl = Get-ChildItem .\runtime\output -Recurse -Filter '*.UPL' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+([regex]::Matches([IO.File]::ReadAllText($upl.FullName), '[^|]+\.(?:pdf|jpg|jpeg|png)') | ForEach-Object Value) | Sort-Object -Unique
+
+# the zip contents
+$zip = Get-ChildItem .\runtime\output -Recurse -Filter '*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($zip.FullName)
+$archive.Entries | Select-Object FullName, Length | Format-Table -AutoSize
+$archive.Dispose()
+```
 
 ---
 
@@ -303,6 +365,9 @@ sqlcmd -S "(localdb)\MSSQLLocalDB" -d CkycCentral_DryRun -b -Q "UPDATE master_re
 ```
 
 (Or recreate the dry-run DB in §0 for a completely clean pass.)
+
+`build-zip` re-renders `AdhaarAP.pdf`, `C3.pdf` and `D1.pdf` from the current record data on every
+run, so repeat runs never pick up a stale generated document.
 
 **Against the real server:** edit
 `samples\settings-dryrun-GTR007375.json` → `documentFetch.channels.beckyc` and set the connection
@@ -339,7 +404,11 @@ read from. Once the fetch is confirmed, flip `fvu.useRealFvu` to `true` for a re
 | Record stuck at **`IMF`** | Inbox folder/file missing. Check `runtime\document-fetch\inbox\beckyc\0871808577544330\` contains a `.txt`, then `& $exe retry --activity ImageFetch --settings $st`. |
 | `...the base64 payload... could not be decoded` | The `.txt` is not `data:<mime>;base64,…` / valid base64 — regenerate it with the helper script. |
 | `The content signature does not match image/jpeg` | A raw (non-`.txt`) file whose extension disagrees with its bytes. Use the `.txt` wrapper, or match the pattern to the content. |
-| `build-zip` → `Skipped : 1` with `... has not been imported: X` | A referenced document is missing. Either remove the reference from the customer JSON, or stage + `documents import` that file. |
+| `build-zip` → `Skipped : 1` with `... has not been imported: X` (a document the record references) | A referenced document is missing. Either remove the reference from the customer JSON, or stage + `documents import` that file. |
+| `build-zip` → `... have not been imported: AdhaarAP.pdf, D1.pdf, C3.pdf` | The **generated** documents were not rendered. Look for the warning `[build-zip] document generation: Document template not found: '<path>'` — `documentGeneration.templateRoot` did not resolve (a relative value resolves against the working directory). The dry-run settings pin it to `D:\ckyccentral\ckyc\doc_format`; if you edited it, restore it, or run from `D:\ckyccentral\ckyc`. Also confirm `documentGeneration.enabled=true` and the Aadhaar/consent entries still list `"channels": [ "beckyc" ]` (§1c). |
+| `AdhaarAP.pdf` is generated but **without the photo** | `photoOfIndividual` is empty (step 4 did not fetch `Photo.jpg`), the stored file's media type is not `image/*`, or `overlayPhoto=false`. |
+| A generated file is missing while `build-zip` still succeeds | The document is disabled, or the record's channel is not in that document's `channels`; check the `documentGeneration.documents[]` entries (§1c). |
+| `build-zip` → `Supporting documents total N bytes; the per-customer limit is 500 KB` | The fetched files plus the generated documents exceed the 500 KB per-customer limit. Use the shipped size-optimised templates and a smaller photo. |
 | `build-zip` → validation errors (`Minor is mandatory`, `Mother / Father / Spouse Name`, `PAN must match …`) | The customer JSON is not FVU-valid — re-check §1b. (This is also why the guide uses `insert` rather than the CRM `store` path: the dummy CRM's hardcoded record predates the current validator.) |
 | `insert` says `Save failed` / `Validation failed` | A required field is missing or malformed — see §1b. |
 | `fetch` recorded the customer but `documents fetch` used the customer id as the folder | `DocumentKey` was empty on the master row — the source JSON must carry `"documentKey"`. Verify with the §4 SQL. |

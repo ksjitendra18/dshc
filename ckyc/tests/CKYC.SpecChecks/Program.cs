@@ -91,6 +91,9 @@ foreach (var line in lines)
     if (!expectedWidths.TryGetValue(fields[0], out var width) || fields.Length != width)
         throw new InvalidOperationException($"Record {fields[0]} emitted {fields.Length} fields; expected {width}.");
 }
+var panFields = lines.Single(line => line.StartsWith("20|", StringComparison.Ordinal)).Split('|');
+if (panFields[32] == "" || panFields[33] != "" || panFields[34] != "")
+    throw new InvalidOperationException("A PAN record must leave the Form 97/61 indicators blank (FVU ERR_044).");
 var addressFields = lines.Single(line => line.StartsWith("40|", StringComparison.Ordinal)).Split('|');
 if (addressFields[14] != "Exact Match" || addressFields[15] != "Y" || addressFields[16] != "" || addressFields[37] != "N"
     || addressFields[39] != "Y" || addressFields[40] != "N" || addressFields[41] != "Y")
@@ -135,6 +138,11 @@ noPanNumber.Pan = null;
 noPanNumber.PanVerified = null;
 noPanNumber.Form97Provided = "Y";
 AssertValid(noPanNumber, "Form 97 used when PAN is absent");
+var noPanFields = writer.Write([noPanNumber], new DateOnly(2026, 8, 25))
+    .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+    .Single(line => line.StartsWith("20|", StringComparison.Ordinal)).Split('|');
+if (noPanFields[33] != "Y" || noPanFields[34] != "")
+    throw new InvalidOperationException("A Form 97 record must emit Form 97=Y and leave Form 61 blank (FVU ERR_036).");
 
 var missingGenderMatch = Read();
 missingGenderMatch.GenderMatchWithOvd = null;

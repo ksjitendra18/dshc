@@ -145,12 +145,14 @@ public sealed class CkycUploadWriter
         f[31] = genderProvided ? Coalesce(r.GenderMatchWithOvd, "Y") : "";
 
         // One of PAN / Form 97 (erstwhile Form 60) / Form 61 is required (CM).
+        // Emit only the selected indicator: the FVU rejects an explicit "N" on the
+        // unselected form when another indicator is set (ERR_036 / ERR_044).
         var pan = r.Pan;
         f[32] = pan;
         var form61 = Is(r.Form61Provided, "Y");
         var form97 = Is(r.Form97Provided, "Y") || (!string.IsNullOrWhiteSpace(pan) ? false : !form61);
-        f[33] = form97 ? "Y" : "N";
-        f[34] = form61 ? "Y" : "N";
+        f[33] = form97 ? "Y" : "";
+        f[34] = form61 ? "Y" : "";
 
         // PAN verified (CM) — mandatory where PAN is provided.
         var hasPan = !string.IsNullOrWhiteSpace(pan);

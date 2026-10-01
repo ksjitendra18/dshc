@@ -1,4 +1,4 @@
-{
+﻿{
   "database": {
     "provider": "sqlserver",
     "connectionString": "Server=(localdb)\\MSSQLLocalDB;Database=CkycCentral_DryRun;Trusted_Connection=True;TrustServerCertificate=True",
@@ -6,7 +6,7 @@
   },
   "source": {
     "mode": "file",
-    "filePath": "D:\\ckyccentral\\ckyc\\samples\\dryrun-GTR007375-source.json",
+    "filePath": "D:\\ckyccentral\\ckyc\\samples\\dryrun-GTR007377-source.json",
     "generateCount": 1,
     "generateSeed": 20260824
   },
@@ -23,7 +23,7 @@
     "regionCode": "12345",
     "clientType": "I",
     "versionNumber": "V1.1",
-    "sequenceStart": 64,
+    "sequenceStart": 65,
     "outputRoot": "D:\\ckyccentral\\ckyc\\runtime\\output"
   },
   "fvu": {
@@ -34,7 +34,7 @@
     "triggerSource": "BATCH",
     "requestTimeoutSeconds": 600,
     "maxRetries": 3,
-    "useRealFvu": false
+    "useRealFvu": true
   },
   "response": {
     "inputRoot": "D:\\ckyccentral\\ckyc\\runtime\\response"
@@ -151,3 +151,4 @@
     "archiveUploadedFiles": true
   }
 }
+
